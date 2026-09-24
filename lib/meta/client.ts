@@ -8,257 +8,76 @@ function facebookGraphBase() {
   return `https://graph.facebook.com/${getMetaGraphApiVersion()}`;
 }
 
-// â”€â”€ Meta Graph API v25.0 Rate-Limit Thresholds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// x-app-usage: app-level (all accounts combined)
-// x-business-use-case-usage: per-account, per use-case (more granular)
-// Both return a JSON object with call_count, total_cputime, total_time (0-100%)
-const APP_USAGE_WARN_THRESHOLD = 70;  // Start warning
-const APP_USAGE_DANGER_THRESHOLD = 85; // Danger zone â€” back off aggressively
-const APP_USAGE_CRITICAL_THRESHOLD = 95; // Critical â€” stop sending
+// Re-export error classes, types, and rate limiter utilities for 100% backward compatibility
+export {
+  MetaApiError,
+  TokenExpiredError,
+  RateLimitError,
+  PermissionError,
+  PolicyBlockError,
+  MessagingWindowExpiredError,
+  CommentAlreadyRepliedError,
+  UserUnreachableError,
+} from "./errors";
 
-/**
- * Track the most recent app-level usage across all calls.
- * This allows the worker to check current usage before sending new requests.
- */
-let lastAppUsagePercent = 0;
-let lastBusinessUsagePercent = 0;
+export type {
+  GraphApiError,
+  InstagramUser,
+  InstagramComment,
+  InstagramMedia,
+  InstagramMediaInsights,
+  TokenResponse,
+  MediaType,
+  MetaButton,
+  GenericTemplateElement,
+  QuickReplyOption,
+} from "./types";
 
-export function getLastAppUsagePercent(): number {
-  return lastAppUsagePercent;
-}
+export {
+  APP_USAGE_WARN_THRESHOLD,
+  APP_USAGE_DANGER_THRESHOLD,
+  APP_USAGE_CRITICAL_THRESHOLD,
+  getLastAppUsagePercent,
+  getLastBusinessUsagePercent,
+  updateUsagePercent,
+  isInDangerZone,
+  isAtCriticalLimit,
+  parseUsageHeader,
+  calculateUsageBackoffMs,
+  applyDangerZoneBackoff,
+} from "./rate-limiter";
 
-export function getLastBusinessUsagePercent(): number {
-  return lastBusinessUsagePercent;
-}
+import {
+  MetaApiError,
+  TokenExpiredError,
+  RateLimitError,
+  PermissionError,
+  PolicyBlockError,
+  MessagingWindowExpiredError,
+  CommentAlreadyRepliedError,
+  UserUnreachableError,
+} from "./errors";
+import type {
+  GraphApiError,
+  InstagramUser,
+  InstagramComment,
+  InstagramMedia,
+  InstagramMediaInsights,
+  TokenResponse,
+  MediaType,
+  MetaButton,
+  GenericTemplateElement,
+  QuickReplyOption,
+} from "./types";
+import {
+  APP_USAGE_WARN_THRESHOLD,
+  APP_USAGE_DANGER_THRESHOLD,
+  APP_USAGE_CRITICAL_THRESHOLD,
+  updateUsagePercent,
+  parseUsageHeader,
+  applyDangerZoneBackoff,
+} from "./rate-limiter";
 
-export function isInDangerZone(): boolean {
-  return (
-    lastAppUsagePercent >= APP_USAGE_DANGER_THRESHOLD ||
-    lastBusinessUsagePercent >= APP_USAGE_DANGER_THRESHOLD
-  );
-}
-
-export function isAtCriticalLimit(): boolean {
-  return (
-    lastAppUsagePercent >= APP_USAGE_CRITICAL_THRESHOLD ||
-    lastBusinessUsagePercent >= APP_USAGE_CRITICAL_THRESHOLD
-  );
-}
-
-export class MetaApiError extends Error {
-  constructor(
-    public code: number,
-    public subcode: number | undefined,
-    public fbTraceId: string | undefined,
-    message: string
-  ) {
-    super(message);
-    this.name = "MetaApiError";
-  }
-}
-
-export class TokenExpiredError extends MetaApiError {
-  constructor(message: string, fbTraceId?: string) {
-    super(190, undefined, fbTraceId, message);
-    this.name = "TokenExpiredError";
-  }
-}
-
-export class RateLimitError extends MetaApiError {
-  /** Suggested backoff in milliseconds, based on Meta's Retry-After or defaults. */
-  public retryAfterMs: number;
-  constructor(message: string, fbTraceId?: string, retryAfterMs = 60_000) {
-    super(368, undefined, fbTraceId, message);
-    this.name = "RateLimitError";
-    this.retryAfterMs = retryAfterMs;
-  }
-}
-
-export class PermissionError extends MetaApiError {
-  constructor(message: string, fbTraceId?: string) {
-    super(100, undefined, fbTraceId, message);
-    this.name = "PermissionError";
-  }
-}
-
-export class PolicyBlockError extends MetaApiError {
-  constructor(message: string, fbTraceId?: string) {
-    super(368, undefined, fbTraceId, message);
-    this.name = "PolicyBlockError";
-  }
-}
-
-export class MessagingWindowExpiredError extends MetaApiError {
-  constructor(subcode: number, message: string, fbTraceId?: string) {
-    super(100, subcode, fbTraceId, message);
-    this.name = "MessagingWindowExpiredError";
-  }
-}
-
-export class CommentAlreadyRepliedError extends MetaApiError {
-  constructor(message: string, fbTraceId?: string) {
-    super(100, 2534015, fbTraceId, message);
-    this.name = "CommentAlreadyRepliedError";
-  }
-}
-
-export class UserUnreachableError extends MetaApiError {
-  constructor(message: string, fbTraceId?: string) {
-    super(100, 2018001, fbTraceId, message);
-    this.name = "UserUnreachableError";
-  }
-}
-
-interface GraphApiError {
-  error: {
-    message: string;
-    type: string;
-    code: number;
-    error_subcode?: number;
-    fbtrace_id?: string;
-  };
-}
-
-export interface InstagramUser {
-  id: string;
-  // Instagram professional account ID. This â€” not `id` (the app-scoped ID) â€”
-  // is what appears as entry.id in webhooks and is used by the messaging API.
-  user_id?: string;
-  username: string;
-  name?: string;
-  profile_picture_url?: string;
-}
-
-export interface InstagramComment {
-  id: string;
-  text: string;
-  from?: {
-    id: string;
-    username?: string;
-  };
-  timestamp: string;
-  // Present when the comments query asks for replies{from}. Used to tell whether
-  // the account owner has already replied to this comment.
-  replies?: {
-    data?: { id: string; from?: { id: string; username?: string } }[];
-  };
-}
-
-export interface InstagramMedia {
-  id: string;
-  caption?: string;
-  media_type: string;
-  media_product_type?: string;
-  media_url?: string;
-  thumbnail_url?: string;
-  timestamp: string;
-  permalink?: string;
-  like_count?: number;
-  comments_count?: number;
-}
-
-export interface InstagramMediaInsights {
-  views?: number;
-  reach?: number;
-  likes?: number;
-  comments?: number;
-  saved?: number;
-  shares?: number;
-  total_interactions?: number;
-}
-
-interface TokenResponse {
-  access_token: string;
-  token_type?: string;
-  expires_in?: number;
-}
-
-/**
- * Parse Meta's x-app-usage or x-business-use-case-usage header.
- * Both have the shape: { call_count: N, total_cputime: N, total_time: N }
- * where N is 0-100 percent.
- *
- * Returns the highest of the three values (most constrained metric).
- */
-function parseUsageHeader(header: string | null): number {
-  if (!header) return 0;
-  try {
-    // x-business-use-case-usage is an object keyed by account ID:
-    // { "123": [{ call_count: N, total_cputime: N, total_time: N, type: "..." }] }
-    // x-app-usage is a simple flat object:
-    // { call_count: N, total_cputime: N, total_time: N }
-    const parsed = JSON.parse(header);
-
-    // Detect business-use-case format (values are arrays of objects)
-    if (typeof parsed === "object" && parsed !== null) {
-      const values = Object.values(parsed);
-      if (Array.isArray(values[0])) {
-        // Business use case format
-        let max = 0;
-        for (const accountData of values) {
-          for (const entry of accountData as any[]) {
-            const entryMax = Math.max(
-              Number(entry.call_count ?? 0),
-              Number(entry.total_cputime ?? 0),
-              Number(entry.total_time ?? 0)
-            );
-            if (entryMax > max) max = entryMax;
-          }
-        }
-        return max;
-      }
-      // Simple app-usage format
-      return Math.max(
-        Number(parsed.call_count ?? 0),
-        Number(parsed.total_cputime ?? 0),
-        Number(parsed.total_time ?? 0)
-      );
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return 0;
-}
-
-/**
- * Calculate how long to wait before the next API call based on current usage %.
- * Returns 0 if well within limits, increasing delays as we approach danger zones.
- */
-export function calculateUsageBackoffMs(usagePercent: number): number {
-  if (usagePercent < APP_USAGE_WARN_THRESHOLD) return 0;
-  if (usagePercent < APP_USAGE_DANGER_THRESHOLD) {
-    // Warning zone: add a small delay proportional to usage
-    return Math.floor((usagePercent - APP_USAGE_WARN_THRESHOLD) * 100); // 0â€“1500ms
-  }
-  if (usagePercent < APP_USAGE_CRITICAL_THRESHOLD) {
-    // Danger zone: back off significantly
-    return 5_000 + Math.floor((usagePercent - APP_USAGE_DANGER_THRESHOLD) * 500);
-  }
-  // Critical: throw to let the caller decide (rate limit error)
-  return 30_000;
-}
-
-/**
- * Apply a small backoff if we're near the Meta API usage ceiling.
- * This is called BEFORE every Meta send to respect the danger zone.
- * Returns the delay applied in ms (for logging), or 0 if not in danger zone.
- */
-export async function applyDangerZoneBackoff(): Promise<number> {
-  const maxUsage = Math.max(lastAppUsagePercent, lastBusinessUsagePercent);
-  if (isAtCriticalLimit()) {
-    // Critical: wait 30 seconds before retrying â€” we're at the wall
-    const delay = 30_000;
-    console.warn(`[Meta API] CRITICAL usage (${maxUsage}%). Backing off ${delay}ms.`);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    return delay;
-  }
-  const backoffMs = calculateUsageBackoffMs(maxUsage);
-  if (backoffMs > 0) {
-    console.warn(`[Meta API] Usage at ${maxUsage}%. Adding ${backoffMs}ms backoff.`);
-    await new Promise((resolve) => setTimeout(resolve, backoffMs));
-  }
-  return backoffMs;
-}
 
 /**
  * A wrapper around global fetch that guarantees the danger zone backoff is applied
@@ -277,8 +96,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
   const appUsage = parseUsageHeader(appUsageHeader);
   const businessUsage = parseUsageHeader(businessUsageHeader);
 
-  if (appUsage > 0) lastAppUsagePercent = appUsage;
-  if (businessUsage > 0) lastBusinessUsagePercent = businessUsage;
+  updateUsagePercent(appUsage, businessUsage);
 
   const maxUsage = Math.max(appUsage, businessUsage);
 
@@ -532,32 +350,6 @@ export async function sendDirectMessageWithLinkButton(
   return handleResponse(response);
 }
 
-export type MediaType = "image" | "video" | "audio";
-
-export interface MetaButton {
-  type: "web_url" | "postback";
-  title: string;
-  url?: string;
-  payload?: string;
-}
-
-export interface GenericTemplateElement {
-  title: string;
-  subtitle?: string;
-  image_url?: string;
-  default_action?: {
-    type: "web_url";
-    url: string;
-  };
-  buttons?: MetaButton[];
-}
-
-export interface QuickReplyOption {
-  content_type: "text";
-  title: string;
-  payload: string;
-  image_url?: string;
-}
 
 /**
  * Send a rich media file (Image, Video, or Voice Audio) directly in Instagram DM.
