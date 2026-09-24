@@ -83,18 +83,19 @@ export async function POST(req: NextRequest) {
       const igHandle = data.instagram_handle;
       const apptTime = data.appointment_time;
 
-      try {
-        await prisma.operationalEvent.create({
+      // Non-blocking telemetry log
+      prisma.operationalEvent
+        .create({
           data: {
             source: "WORKER",
             level: "INFO",
             message: `PHP Booking Confirmed: ${fullName} (${phone}) - Appt: ${apptTime}`,
             payload: data,
           },
+        })
+        .catch(() => {
+          // Operational log failure should never block webhook response
         });
-      } catch (err) {
-        // Operational log shouldn't block webhook response
-      }
 
       return NextResponse.json({
         success: true,
@@ -105,18 +106,19 @@ export async function POST(req: NextRequest) {
 
     // 3. Handle CRM Status Changed Event
     if (event === "crm.status_changed") {
-      try {
-        await prisma.operationalEvent.create({
+      // Non-blocking telemetry log
+      prisma.operationalEvent
+        .create({
           data: {
             source: "WORKER",
             level: "INFO",
             message: `CRM Status Changed: Lead #${data.crm_lead_id} -> ${data.new_status}`,
             payload: data,
           },
+        })
+        .catch(() => {
+          // Operational log failure should never block webhook response
         });
-      } catch (err) {
-        // Safe fail
-      }
 
       return NextResponse.json({
         success: true,
