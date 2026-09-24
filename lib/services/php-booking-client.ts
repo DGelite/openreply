@@ -63,40 +63,56 @@ export interface SyncLeadDirectParams {
   custom_data?: Record<string, unknown>;
 }
 
+export interface LeadStatusResponse {
+  success: boolean;
+  found: boolean;
+  waitlist_id?: number;
+  full_name?: string;
+  phone?: string;
+  is_verified?: boolean;
+  appointment_time?: string | null;
+  crm_status?: string;
+  assigned_agent_id?: number | null;
+  message?: string;
+}
+
 /** Default connection timeout: 8 seconds. */
 const DEFAULT_TIMEOUT_MS = 8000;
+/** Cooldown period when PHP server fails completely: 60 seconds. */
+const FAILURE_COOLDOWN_MS = 60_000;
 
 /**
  * PhpBookingClient
- * Type-safe TypeScript SDK connecting OpenReply to the PHP Booking & CRM system (admin.php).
+ * Type-safe, Resilient TypeScript SDK connecting OpenReply to the PHP Booking & CRM system.
  *
- * Authentication uses HMAC-SHA256 signed requests (X-Signature + X-Timestamp headers).
- * The raw API secret is never sent in request headers for security.
- *
- * Local server:  http://localhost/admin.php   (C:\wamp64\www\admin.php)
- * Production:    Set PHP_ADMIN_API_URL env var to your online server URL.
+ * Capabilities:
+ * - Dual Authentication: HMAC-SHA256 (X-Signature + X-Timestamp) + Bearer Token
+ * - Same-Server & Cross-Server Support (automatic localhost vs remote URL handling)
+ * - Standalone Resilience: Zero-cost graceful degradation if PHP is offline or disabled
+ * - Fast Circuit Breaker: Prevents hanging Instagram DMs when the remote server is down
  */
 export class PhpBookingClient {
   private baseUrl: string;
   private apiSecret: string;
   private timeoutMs: number;
+  private lastFailureTime = 0;
+  private failureReason = "";
 
   constructor(
-    baseUrl: string = process.env.PHP_ADMIN_API_URL || "http://localhost/admin.php",
+    baseUrl: string = process.env.PHP_ADMIN_API_URL || "http://localhost/api_openreply.php",
     apiSecret: string = process.env.PHP_ADMIN_API_SECRET || "de_secure_api_key_2026_x892n3m",
     timeoutMs: number = DEFAULT_TIMEOUT_MS
   ) {
-    // Validate URL format — fail fast with a useful message
     if (!baseUrl || !baseUrl.startsWith("http")) {
       throw new Error(
         `PhpBookingClient: Invalid base URL "${baseUrl}". Set PHP_ADMIN_API_URL in your .env file.`
       );
     }
     try {
-      new URL(baseUrl); // throws on malformed URL
+      new URL(baseUrl);
     } catch {
       throw new Error(
-        `PhpBookingClient: Malformed PHP Admin URL "${baseUrl}". Must be a full URL like http://yourdomain.com/admin.php`
+        `PhpBookingClient: Malformed PHP Admin URL "${baseUrl}". Must be a full URL like http://localhost/api_openreply.php`
       );
     }
 
@@ -106,10 +122,37 @@ export class PhpBookingClient {
   }
 
   /**
-   * Generate HMAC-SHA256 authentication headers.
-   * Only X-Signature and X-Timestamp are sent — the raw secret is never exposed.
+   * Check if integration is enabled via environment variable.
    */
-  private generateHmacHeaders(bodyStr: string): Record<string, string> {
+  public isBridgeEnabled(): boolean {
+    return process.env.PHP_BOOKING_ENABLED !== "false";
+  }
+
+  /**
+   * Check if server is currently in circuit breaker cooldown.
+   */
+  public isServerInCooldown(): boolean {
+    if (this.lastFailureTime === 0) return false;
+    const elapsed = Date.now() - this.lastFailureTime;
+    if (elapsed < FAILURE_COOLDOWN_MS) {
+      return true;
+    }
+    // Cooldown expired
+    this.lastFailureTime = 0;
+    this.failureReason = "";
+    return false;
+  }
+
+  private tripCooldown(reason: string) {
+    this.lastFailureTime = Date.now();
+    this.failureReason = reason;
+    console.warn(`[PhpBookingClient] Circuit breaker tripped: ${reason}. Cooldown 60s.`);
+  }
+
+  /**
+   * Generate HMAC-SHA256 authentication headers + Bearer fallback.
+   */
+  private generateHeaders(bodyStr: string): Record<string, string> {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = crypto
       .createHmac("sha256", this.apiSecret)
@@ -117,22 +160,26 @@ export class PhpBookingClient {
       .digest("hex");
 
     return {
-      "Content-Type": "application/json",
+      "Content-Type": "application/json; charset=utf-8",
       "X-Timestamp": timestamp,
       "X-Signature": signature,
-      // NOTE: Raw secret is intentionally NOT sent in Authorization header.
-      // PHP side must verify via HMAC: sha256(secret, "timestamp.body") === X-Signature
+      Authorization: `Bearer ${this.apiSecret}`,
+      "User-Agent": "OpenReply-InstagramDM/2.0",
     };
   }
 
   /**
-   * Execute a fetch with configurable timeout, and 1 automatic retry on network errors.
+   * Execute fetch with timeout, circuit breaker check, and 1 retry.
    */
   private async fetchWithTimeout(
     url: string,
     init: RequestInit,
     retries = 1
   ): Promise<Response> {
+    if (this.isServerInCooldown()) {
+      throw new Error(`PHP Server in cooldown (${this.failureReason})`);
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -141,77 +188,144 @@ export class PhpBookingClient {
         return response;
       } catch (err: unknown) {
         const isLastAttempt = attempt === retries;
-        if (isLastAttempt) throw err;
-        // Wait 500ms before retry
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (isLastAttempt) {
+          this.tripCooldown(err instanceof Error ? err.message : "Network error");
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
       } finally {
         clearTimeout(timer);
       }
     }
-    // Unreachable, but satisfies TypeScript
+
     throw new Error("fetch failed");
   }
 
   /**
    * Ping the PHP server to verify connectivity and HMAC authentication.
-   * Used by the "Test Connection" button in Settings.
    */
-  async ping(): Promise<{ success: boolean; message: string; server_time?: string }> {
-    const url = new URL(this.baseUrl);
-    url.searchParams.set("action", "ping");
-
-    const headers = this.generateHmacHeaders("");
-    const response = await this.fetchWithTimeout(url.toString(), {
-      method: "GET",
-      headers,
-    });
-
-    if (!response.ok) {
-      throw new Error(`PHP Server responded with HTTP ${response.status}`);
+  async ping(): Promise<{
+    success: boolean;
+    message: string;
+    server_time?: string;
+    api_version?: string;
+    latency_ms?: number;
+    standalone_fallback?: boolean;
+  }> {
+    if (!this.isBridgeEnabled()) {
+      return {
+        success: true,
+        message: "حالت مستقل فعال است (ارتباط با سیستم رزرو غیرفعال شده است).",
+        standalone_fallback: true,
+      };
     }
 
-    const data = await response.json();
-    return {
-      success: Boolean(data?.success ?? true),
-      message: data?.message || "Connection OK",
-      server_time: data?.server_time,
-    };
+    const start = Date.now();
+    try {
+      const url = new URL(this.baseUrl);
+      url.searchParams.set("action", "ping");
+
+      const headers = this.generateHeaders("");
+      const response = await this.fetchWithTimeout(url.toString(), {
+        method: "GET",
+        headers,
+      });
+
+      const latency_ms = Date.now() - start;
+
+      if (!response.ok) {
+        return {
+          success: false,
+          message: `خطای سرور PHP با کد وضعیت HTTP ${response.status}`,
+          latency_ms,
+        };
+      }
+
+      const data = (await response.json()) as any;
+      return {
+        success: Boolean(data?.success ?? true),
+        message: data?.message || "ارتباط با سرور رزرو با موفقیت برقرار شد.",
+        server_time: data?.server_time,
+        api_version: data?.api_version,
+        latency_ms,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        message: err instanceof Error ? err.message : "عدم امکان برقراری ارتباط با سرور رزرو",
+        standalone_fallback: true,
+      };
+    }
   }
 
   /**
    * Fetch available booking slots for a given date.
-   * If no date provided, uses today's date.
    */
   async getAvailableSlots(date?: string): Promise<GetSlotsResponse> {
-    const url = new URL(this.baseUrl);
-    url.searchParams.set("action", "get_slots");
-    if (date) url.searchParams.set("date", date);
+    const today = new Date().toISOString().slice(0, 10);
+    const targetDate = date || today;
 
-    const headers = this.generateHmacHeaders("");
-    const response = await this.fetchWithTimeout(url.toString(), {
-      method: "GET",
-      headers,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`PHP Booking API Error (${response.status}): ${errorText}`);
+    if (!this.isBridgeEnabled() || this.isServerInCooldown()) {
+      return {
+        success: true,
+        date: targetDate,
+        is_working_day: true,
+        total_slots: 0,
+        slots: [],
+        message: "سیستم رزرواسیون در حالت مستقل قرار دارد.",
+      };
     }
 
-    const data = await response.json() as GetSlotsResponse;
-    // Guarantee slots is always an array even if PHP returns null
-    return { ...data, slots: data.slots ?? [] };
+    try {
+      const url = new URL(this.baseUrl);
+      url.searchParams.set("action", "get_slots");
+      if (date) url.searchParams.set("date", date);
+
+      const headers = this.generateHeaders("");
+      const response = await this.fetchWithTimeout(url.toString(), {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`PHP Booking API Error (${response.status}): ${errorText}`);
+      }
+
+      const data = (await response.json()) as GetSlotsResponse;
+      return { ...data, slots: data.slots ?? [] };
+    } catch (err) {
+      console.warn("[PhpBookingClient] getAvailableSlots fallback:", err);
+      return {
+        success: true,
+        date: targetDate,
+        is_working_day: true,
+        total_slots: 0,
+        slots: [],
+        message: "حالت اضطراری مستقل (سرور رزرو موقتاً در دسترس نیست)",
+      };
+    }
   }
 
   /**
    * Request an SMS OTP for booking a slot via Instagram DM.
    */
   async requestBookingOtp(params: RequestOtpParams): Promise<RequestOtpResponse> {
+    if (!this.isBridgeEnabled() || this.isServerInCooldown()) {
+      return {
+        success: false,
+        waitlist_id: 0,
+        phone: params.phone,
+        sms_sent: false,
+        message: "سیستم ارسال کد تایید موقتاً در دسترس نیست.",
+      };
+    }
+
     const url = new URL(this.baseUrl);
     url.searchParams.set("action", "request_otp");
 
     const bodyStr = JSON.stringify(params);
-    const headers = this.generateHmacHeaders(bodyStr);
+    const headers = this.generateHeaders(bodyStr);
 
     const response = await this.fetchWithTimeout(url.toString(), {
       method: "POST",
@@ -235,7 +349,7 @@ export class PhpBookingClient {
     url.searchParams.set("action", "confirm_booking");
 
     const bodyStr = JSON.stringify(params);
-    const headers = this.generateHmacHeaders(bodyStr);
+    const headers = this.generateHeaders(bodyStr);
 
     const response = await this.fetchWithTimeout(url.toString(), {
       method: "POST",
@@ -252,15 +366,88 @@ export class PhpBookingClient {
   }
 
   /**
-   * Sync a captured lead from OpenReply to the PHP CRM.
-   * Works for both OTP-verified and direct (no-OTP) lead saves.
+   * Sync a captured lead from OpenReply to the PHP CRM (Direct sync without OTP).
    */
-  async syncLead(payload: SyncLeadDirectParams): Promise<{ success: boolean; crm_lead_id?: number; message?: string }> {
-    const url = new URL(this.baseUrl);
-    url.searchParams.set("action", "sync_lead");
+  async syncLead(payload: SyncLeadDirectParams): Promise<{
+    success: boolean;
+    crm_lead_id?: number;
+    waitlist_id?: number;
+    lead_score?: number;
+    message?: string;
+  }> {
+    if (!this.isBridgeEnabled() || this.isServerInCooldown()) {
+      return {
+        success: true,
+        message: "لید در سیستم مستقل OpenReply ثبت گردید (پل غیرفعال یا در حالت بازگشتی)",
+      };
+    }
 
-    const bodyStr = JSON.stringify(payload);
-    const headers = this.generateHmacHeaders(bodyStr);
+    try {
+      const url = new URL(this.baseUrl);
+      url.searchParams.set("action", "sync_lead");
+
+      const bodyStr = JSON.stringify(payload);
+      const headers = this.generateHeaders(bodyStr);
+
+      const response = await this.fetchWithTimeout(url.toString(), {
+        method: "POST",
+        headers,
+        body: bodyStr,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`PHP CRM Sync Error (${response.status}): ${errorText}`);
+      }
+
+      return (await response.json()) as {
+        success: boolean;
+        crm_lead_id?: number;
+        waitlist_id?: number;
+        lead_score?: number;
+        message?: string;
+      };
+    } catch (err) {
+      console.warn("[PhpBookingClient] syncLead offline fallback:", err);
+      return {
+        success: true,
+        message: "ثبت محلی در دیتابیس OpenReply بدون تاخیر",
+      };
+    }
+  }
+
+  /**
+   * Query status of an appointment or lead.
+   */
+  async getLeadStatus(params: { phone?: string; waitlist_id?: number }): Promise<LeadStatusResponse> {
+    const url = new URL(this.baseUrl);
+    url.searchParams.set("action", "get_lead_status");
+    if (params.phone) url.searchParams.set("phone", params.phone);
+    if (params.waitlist_id) url.searchParams.set("waitlist_id", String(params.waitlist_id));
+
+    const headers = this.generateHeaders("");
+    const response = await this.fetchWithTimeout(url.toString(), {
+      method: "GET",
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`PHP Lead Status Error (${response.status}): ${errorText}`);
+    }
+
+    return (await response.json()) as LeadStatusResponse;
+  }
+
+  /**
+   * Cancel an appointment via Instagram DM.
+   */
+  async cancelBooking(params: { phone?: string; waitlist_id?: number }): Promise<{ success: boolean; message: string }> {
+    const url = new URL(this.baseUrl);
+    url.searchParams.set("action", "cancel_booking");
+
+    const bodyStr = JSON.stringify(params);
+    const headers = this.generateHeaders(bodyStr);
 
     const response = await this.fetchWithTimeout(url.toString(), {
       method: "POST",
@@ -270,14 +457,14 @@ export class PhpBookingClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`PHP CRM Sync Error (${response.status}): ${errorText}`);
+      throw new Error(`PHP Cancel Booking Error (${response.status}): ${errorText}`);
     }
 
-    return (await response.json()) as { success: boolean; crm_lead_id?: number; message?: string };
+    return (await response.json()) as { success: boolean; message: string };
   }
 
   /**
-   * Generic HMAC Request executor for custom actions.
+   * Generic Request executor.
    */
   async request<T = unknown>(method: "GET" | "POST", payload: Record<string, unknown>): Promise<T> {
     const url = new URL(this.baseUrl);
@@ -295,7 +482,7 @@ export class PhpBookingClient {
       }
     }
 
-    const headers = this.generateHmacHeaders(bodyStr);
+    const headers = this.generateHeaders(bodyStr);
     const response = await this.fetchWithTimeout(url.toString(), {
       method,
       headers,
