@@ -5,17 +5,12 @@
  *
  * Two-pane campaign editor: a control panel on the left and a live phone
  * preview on the right. Used for both creating and editing a campaign.
- *
- * Turn 1 wires the fully-functional pieces: trigger scope (specific / any /
- * next post), match mode (specific words / any word), the opening + reveal DM
- * text, public reply, and the tracked link. Button-driven delivery and the
- * follow / email / follow-up steps arrive in later turns.
+ * Modularized into focused sub-sections for triggers, keywords, opening DMs, and reveal DMs.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
-import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
 import { readCache, writeCache } from "@/lib/client-cache";
 import {
@@ -24,103 +19,18 @@ import {
   type ImportRow,
 } from "@/lib/import-queue";
 
-type TriggerScope = "specific" | "any" | "next";
-type MatchMode = "specific" | "any";
+import {
+  type TriggerScope,
+  type MatchMode,
+  type LoadedCampaign,
+  type CampaignBuilderProps,
+  TriggerSection,
+  KeywordSection,
+  OpeningDmSection,
+  RevealDmSection,
+} from "./campaign-builder/index";
 
-interface LoadedCampaign {
-  id: string;
-  name: string;
-  postId: string | null;
-  postUrl: string | null;
-  pendingNextReel: boolean;
-  matchAnyPost: boolean;
-  keywords: string[];
-  matchAnyWord: boolean;
-  dmMessage: string;
-  openingDmEnabled: boolean;
-  openingDmMessage: string | null;
-  openingDmButtonLabel: string | null;
-  linkButtonLabel: string | null;
-  publicReplyEnabled: boolean;
-  publicReplyMessage: string | null;
-  publicReplyMessages: string[];
-  isActive: boolean;
-  instagramAccountId: string;
-  trackedLinks?: { destinationUrl: string }[];
-}
-
-interface CampaignBuilderProps {
-  mode: "new" | "edit";
-  campaignId?: string;
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-3">
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      {children}
-    </div>
-  );
-}
-
-function Radio({
-  checked,
-  onSelect,
-  children,
-}: {
-  checked: boolean;
-  onSelect: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
-        checked ? "border-accent bg-accent/5" : "border-border hover:border-border-hover"
-      }`}
-    >
-      <span
-        className={`grid h-4 w-4 shrink-0 place-items-center rounded-full border ${
-          checked ? "border-accent" : "border-zinc-500"
-        }`}
-      >
-        {checked && <span className="h-2 w-2 rounded-full bg-accent" />}
-      </span>
-      <span className="flex-1 text-foreground">{children}</span>
-    </button>
-  );
-}
-
-function Toggle({
-  on,
-  onToggle,
-}: {
-  on: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-        on ? "bg-accent" : "bg-zinc-700"
-      }`}
-    >
-      <span
-        className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${
-          on ? "left-6" : "left-1"
-        }`}
-      />
-    </button>
-  );
-}
+export type { CampaignBuilderProps };
 
 export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderProps) {
   const router = useRouter();
@@ -585,261 +495,109 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[300px_1fr]">
-      {/* Left: controls */}
-      <div className="space-y-8">
-        {error && (
-          <div className="rounded border border-error/20 bg-error/10 p-3 text-sm text-error">
-            {error}
-          </div>
-        )}
+        {/* Left: controls */}
+        <div className="space-y-8">
+          {error && (
+            <div className="rounded border border-error/20 bg-error/10 p-3 text-sm text-error">
+              {error}
+            </div>
+          )}
 
-        <div className="space-y-3">
-          <label className="text-sm font-semibold text-foreground">
-            Campaign name{" "}
-            <span className="font-normal text-muted">(optional)</span>
-          </label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. YC referral"
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-            maxLength={100}
+          <div className="space-y-3">
+            <label className="text-sm font-semibold text-foreground">
+              Campaign name{" "}
+              <span className="font-normal text-muted">(optional)</span>
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. YC referral"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+              maxLength={100}
+            />
+            {accounts.length > 1 && (
+              <div className="pt-2">
+                <AccountSelect
+                  accounts={accounts}
+                  value={selectedAccountId}
+                  onChange={(id) => {
+                    setSelectedAccountId(id);
+                    setPostId(null);
+                    setPostUrl(null);
+                    setPostThumb(null);
+                  }}
+                  includeAll={false}
+                  label="Instagram account"
+                />
+              </div>
+            )}
+          </div>
+
+          <TriggerSection
+            triggerScope={triggerScope}
+            setTriggerScope={setTriggerScope}
+            postId={postId}
+            selectedAccountId={selectedAccountId}
+            usedPosts={usedPosts}
+            handlePostSelect={handlePostSelect}
           />
-          {accounts.length > 1 && (
-            <div className="pt-2">
-              <AccountSelect
-                accounts={accounts}
-                value={selectedAccountId}
-                onChange={(id) => {
-                  setSelectedAccountId(id);
-                  setPostId(null);
-                  setPostUrl(null);
-                  setPostThumb(null);
-                }}
-                includeAll={false}
-                label="Instagram account"
-              />
-            </div>
-          )}
-        </div>
 
-        <Section title="When someone comments on">
-          <Radio
-            checked={triggerScope === "specific"}
-            onSelect={() => setTriggerScope("specific")}
-          >
-            a specific post or reel
-          </Radio>
-          {triggerScope === "specific" && (
-            <div className="rounded-lg border border-border p-2">
-              <PostPicker
-                selectedPostId={postId}
-                instagramAccountId={selectedAccountId}
-                usedPostIds={usedPosts}
-                onSelect={handlePostSelect}
-              />
-            </div>
-          )}
-          <Radio
-            checked={triggerScope === "any"}
-            onSelect={() => setTriggerScope("any")}
-          >
-            any post or reel
-          </Radio>
-          <Radio
-            checked={triggerScope === "next"}
-            onSelect={() => setTriggerScope("next")}
-          >
-            next post or reel
-          </Radio>
-        </Section>
-
-        <Section title="And this comment has">
-          <Radio
-            checked={matchMode === "specific"}
-            onSelect={() => setMatchMode("specific")}
-          >
-            a specific word or words
-          </Radio>
-          {matchMode === "specific" && (
-            <div className="space-y-1">
-              <input
-                value={keywordText}
-                onChange={(e) => setKeywordText(e.target.value)}
-                placeholder="Enter a word or multiple"
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-              />
-              <p className="text-xs text-muted">Use commas to separate words</p>
-            </div>
-          )}
-          <Radio
-            checked={matchMode === "any"}
-            onSelect={() => setMatchMode("any")}
-          >
-            any word
-          </Radio>
-          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
-            <span className="text-sm text-foreground">
-              reply to their comments under the post
-            </span>
-            <Toggle
-              on={publicReplyEnabled}
-              onToggle={() => setPublicReplyEnabled(!publicReplyEnabled)}
-            />
-          </div>
-          {publicReplyEnabled && (
-            <div className="space-y-2">
-              {publicReplyMessages.map((msg, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    value={msg}
-                    onChange={(e) =>
-                      setPublicReplyMessages((prev) =>
-                        prev.map((m, idx) => (idx === i ? e.target.value : m))
-                      )
-                    }
-                    placeholder="Sent you a DM! 📩"
-                    maxLength={1000}
-                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-                  />
-                  {publicReplyMessages.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPublicReplyMessages((prev) =>
-                          prev.filter((_, idx) => idx !== i)
-                        )
-                      }
-                      className="shrink-0 px-2 text-muted hover:text-error"
-                      aria-label="Remove reply"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))}
-              {publicReplyMessages.length < 10 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setPublicReplyMessages((prev) => [...prev, ""])
-                  }
-                  className="text-xs font-medium text-accent hover:underline"
-                >
-                  + Add another reply
-                </button>
-              )}
-              <p className="text-xs text-muted">
-                One is picked at random each time, so replies don&apos;t look
-                identical.
-              </p>
-            </div>
-          )}
-        </Section>
-
-        <Section title="Opening DM & Follow Gate Prompt (پیام اولیه و درخواست فالو)">
-          <div className="rounded-lg border border-border p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium text-foreground">Require Follow / Opening Prompt</span>
-                <p className="text-xs text-muted mt-0.5">
-                  Send an initial interactive DM asking the user to follow your page before receiving the link button.
-                </p>
-              </div>
-              <Toggle
-                on={openingDmEnabled}
-                onToggle={() => setOpeningDmEnabled(!openingDmEnabled)}
-              />
-            </div>
-            {openingDmEnabled && (
-              <div className="mt-3 space-y-2">
-                <textarea
-                  value={openingDmMessage}
-                  onChange={(e) => setOpeningDmMessage(e.target.value)}
-                  placeholder="سلام! برای دریافت فایل/لینک، اول پیج ما رو فالو کن و بعد روی دکمه زیر کلیک کن 👇"
-                  rows={3}
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
-                  maxLength={1000}
-                />
-                <input
-                  value={openingDmButtonLabel}
-                  onChange={(e) => setOpeningDmButtonLabel(e.target.value)}
-                  placeholder="فالو کردم / دریافت لینک (Confirm & Get Link)"
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-                  maxLength={64}
-                />
-              </div>
-            )}
-          </div>
-        </Section>
-
-        <Section title="And then, they will get">
-          <div className="rounded-lg border border-border p-3 space-y-2">
-            <span className="text-sm text-foreground">a DM with a link</span>
-            <textarea
-              value={dmMessage}
-              onChange={(e) => setDmMessage(e.target.value)}
-              placeholder="Write a message"
-              rows={3}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
-              maxLength={1000}
-            />
-            {linkOpen ? (
-              <div className="space-y-2">
-                <input
-                  value={trackedDestinationUrl}
-                  onChange={(e) => setTrackedDestinationUrl(e.target.value)}
-                  onBlur={ensureLinkToken}
-                  placeholder="https://yourlink.com/offer"
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-                />
-                <input
-                  value={linkButtonLabel}
-                  onChange={(e) => setLinkButtonLabel(e.target.value)}
-                  placeholder="Button label (e.g. Open link)"
-                  maxLength={20}
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-                />
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setLinkOpen(true)}
-                className="w-full rounded-lg border border-border py-2 text-sm text-muted hover:text-foreground"
-              >
-                + Add A Link
-              </button>
-            )}
-            <p className="text-xs text-muted">
-              {"{link}"} inserts the tracked link; {"{username}"} personalizes.
-            </p>
-          </div>
-        </Section>
-      </div>
-
-      {/* Right: preview */}
-      <div>
-        <p className="mb-4 text-sm text-muted">Preview</p>
-        <div className="flex justify-center lg:sticky lg:top-6 lg:block">
-          <CampaignPreview
-            tab={previewTab}
-            onTabChange={setPreviewTab}
-            username={username}
-            avatarUrl={avatarUrl}
-            postThumb={postThumb}
-            caption={postCaption}
-            sampleComment={keywords[0] ?? ""}
+          <KeywordSection
+            matchMode={matchMode}
+            setMatchMode={setMatchMode}
+            keywordText={keywordText}
+            setKeywordText={setKeywordText}
             publicReplyEnabled={publicReplyEnabled}
-            publicReplyMessage={publicReplyMessages.find((m) => m.trim()) ?? ""}
+            setPublicReplyEnabled={setPublicReplyEnabled}
+            publicReplyMessages={publicReplyMessages}
+            setPublicReplyMessages={setPublicReplyMessages}
+          />
+
+          <OpeningDmSection
             openingDmEnabled={openingDmEnabled}
+            setOpeningDmEnabled={setOpeningDmEnabled}
             openingDmMessage={openingDmMessage}
+            setOpeningDmMessage={setOpeningDmMessage}
             openingDmButtonLabel={openingDmButtonLabel}
-            revealMessage={dmMessage}
-            hasLink={Boolean(trackedDestinationUrl.trim())}
-            linkButtonLabel={linkButtonLabel || "Open link"}
+            setOpeningDmButtonLabel={setOpeningDmButtonLabel}
+          />
+
+          <RevealDmSection
+            dmMessage={dmMessage}
+            setDmMessage={setDmMessage}
+            linkOpen={linkOpen}
+            setLinkOpen={setLinkOpen}
+            trackedDestinationUrl={trackedDestinationUrl}
+            setTrackedDestinationUrl={setTrackedDestinationUrl}
+            linkButtonLabel={linkButtonLabel}
+            setLinkButtonLabel={setLinkButtonLabel}
+            ensureLinkToken={ensureLinkToken}
           />
         </div>
-      </div>
+
+        {/* Right: preview */}
+        <div>
+          <p className="mb-4 text-sm text-muted">Preview</p>
+          <div className="flex justify-center lg:sticky lg:top-6 lg:block">
+            <CampaignPreview
+              tab={previewTab}
+              onTabChange={setPreviewTab}
+              username={username}
+              avatarUrl={avatarUrl}
+              postThumb={postThumb}
+              caption={postCaption}
+              sampleComment={keywords[0] ?? ""}
+              publicReplyEnabled={publicReplyEnabled}
+              publicReplyMessage={publicReplyMessages.find((m) => m.trim()) ?? ""}
+              openingDmEnabled={openingDmEnabled}
+              openingDmMessage={openingDmMessage}
+              openingDmButtonLabel={openingDmButtonLabel}
+              revealMessage={dmMessage}
+              hasLink={Boolean(trackedDestinationUrl.trim())}
+              linkButtonLabel={linkButtonLabel || "Open link"}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
