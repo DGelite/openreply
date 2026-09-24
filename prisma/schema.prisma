@@ -1,0 +1,976 @@
+// ManyChat Alternative — B2B Instagram Comment → DM SaaS schema
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../lib/generated/prisma"
+  binaryTargets = ["native", "rhel-openssl-3.0.x", "linux-musl-openssl-3.0.x", "linux-musl"]
+}
+
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id            String         @id @default(cuid())
+  name          String?
+  username      String?        @unique
+  email         String?        @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  systemRole    SystemUserRole @default(MEMBER)
+  image         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  ownedWorkspaces  Workspace[]           @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+  sentInvitations  WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
+}
+
+enum SystemUserRole {
+  SUPER_ADMIN
+  ADMIN
+  MEMBER
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  owner     User     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usagePeriodStart  DateTime @default(now())
+  dmsSentThisPeriod Int      @default(0)
+
+  members             WorkspaceMember[]
+  invitations         WorkspaceInvitation[]
+  instagramAccounts   InstagramAccount[]
+  automations         Automation[]
+  dmLogs              DmLog[]
+  trackedLinks        TrackedLink[]
+  linkClicks          LinkClick[]
+  webhookEvents       WebhookEvent[]
+  operationalEvents   OperationalEvent[]
+  tags                Tag[]
+  dripCampaigns       DripCampaign[]
+  products            Product[]
+  leads               Lead[]
+  conversationStates  ConversationState[]
+  giveaways           Giveaway[]
+  couponPools         CouponPool[]
+  faqItems            FaqItem[]
+  aiConfigs           AiConfig[]
+  knowledgeDocuments  KnowledgeDocument[]
+  aiMemories          AiConversationMemory[]
+  aiGoals             AiGoal[]
+  aiAuditLogs         AiAuditLog[]
+  leadForms           LeadForm[]
+  leadFormSubmissions LeadFormSubmission[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(OWNER)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model WorkspaceInvitation {
+  id              String                    @id @default(cuid())
+  workspaceId     String
+  email           String
+  role            WorkspaceRole             @default(MEMBER)
+  token           String                    @unique
+  status          WorkspaceInvitationStatus @default(PENDING)
+  invitedByUserId String?
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User?     @relation("WorkspaceInvitationsSent", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, email])
+  @@index([email])
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model InstagramAccount {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  instagramId       String    @unique
+  username          String
+  name              String?
+  accessToken       String    @db.Text
+  tokenExpiresAt    DateTime?
+  webhookSubscribed Boolean   @default(false)
+  connectedAt       DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automations Automation[]
+  dmLogs      DmLog[]
+  linkClicks  LinkClick[]
+
+  @@index([workspaceId])
+}
+
+model Automation {
+  id                 String @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+
+  name                 String
+  goal                 String?
+  postId               String?
+  postUrl              String?
+  pendingNextReel      Boolean @default(false)
+  matchAnyPost         Boolean @default(false)
+  keywords             Json    @default("[]")
+  matchAnyWord         Boolean @default(false)
+  dmMessage            String  @db.Text
+  openingDmEnabled     Boolean @default(false)
+  openingDmMessage     String? @db.Text
+  openingDmButtonLabel String?
+  linkButtonLabel      String?
+  publicReplyEnabled   Boolean @default(false)
+  publicReplyMessage   String? @db.Text
+  publicReplyMessages  Json    @default("[]")
+  isActive             Boolean @default(true)
+  wholeWordMatch       Boolean @default(true)
+  reportShareSlug      String? @unique
+  reportShareEnabled   Boolean @default(true)
+
+  triggerType        AutomationTriggerType @default(COMMENT)
+  collectEmail       Boolean               @default(false)
+  collectPhone       Boolean               @default(false)
+  collectPhoneSkipOtp Boolean              @default(false)
+  leadPromptEmail    String?               @db.Text
+  leadPromptPhone    String?               @db.Text
+  leadSuccessMessage String?               @db.Text
+  leadMagnetFileUrl  String?               @db.Text
+
+  // Visual Flow Builder — stores the full multi-node FlowGraph JSON
+  flowGraph Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount   InstagramAccount    @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  dmLogs             DmLog[]
+  trackedLinks       TrackedLink[]
+  linkClicks         LinkClick[]
+  conversationStates ConversationState[]
+  giveaways          Giveaway[]
+  couponPools        CouponPool[]
+  leads              Lead[]
+
+  @@index([workspaceId])
+  @@index([instagramAccountId])
+  @@index([postId])
+}
+
+model DmLog {
+  id                 String @id @default(cuid())
+  workspaceId        String
+  automationId       String
+  instagramAccountId String
+
+  commenterId    String
+  commenterName  String?
+  commentText    String    @db.Text
+  commentId      String
+  type           DmType    @default(COMMENT_REPLY)
+  matchedKeyword String?
+  status         DmStatus  @default(PENDING)
+  attempts       Int       @default(0)
+  dmSentAt       DateTime?
+  errorMessage   String?   @db.Text
+
+  publicReplySentAt DateTime?
+  publicReplyError  String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation       Automation       @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([automationId, commentId])
+  @@index([workspaceId])
+  @@index([automationId])
+  @@index([instagramAccountId])
+  @@index([status])
+}
+
+model ProcessedComment {
+  id                 String   @id @default(cuid())
+  instagramAccountId String
+  commentId          String   @unique
+  source             String // "WEBHOOK" | "POLLING"
+  seenAt             DateTime @default(now())
+
+  @@index([instagramAccountId])
+}
+
+model ProcessedMessage {
+  id                 String   @id @default(cuid())
+  instagramAccountId String
+  mid                String   @unique
+  source             String // "WEBHOOK"
+  seenAt             DateTime @default(now())
+
+  @@index([instagramAccountId])
+}
+
+model TrackedLink {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  automationId   String
+  slug           String   @unique
+  label          String?
+  destinationUrl String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation Automation  @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  clicks     LinkClick[]
+
+  @@index([workspaceId])
+  @@index([automationId])
+}
+
+model LinkClick {
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  automationId       String
+  instagramAccountId String
+  trackedLinkId      String
+  ipHash             String?
+  userAgent          String?
+  referrer           String?
+  createdAt          DateTime @default(now())
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation       Automation       @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  trackedLink      TrackedLink      @relation(fields: [trackedLinkId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([automationId])
+  @@index([instagramAccountId])
+  @@index([trackedLinkId])
+  @@index([createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+model WebhookEvent {
+  id           String        @id @default(cuid())
+  workspaceId  String?
+  object       String?
+  payload      Json
+  status       WebhookStatus @default(PENDING)
+  errorMessage String?       @db.Text
+  createdAt    DateTime      @default(now())
+  processedAt  DateTime?
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model OperationalEvent {
+  id          String                 @id @default(cuid())
+  workspaceId String?
+  source      OperationalEventSource
+  level       OperationalEventLevel  @default(INFO)
+  message     String                 @db.Text
+  payload     Json?
+  createdAt   DateTime               @default(now())
+  resolvedAt  DateTime?
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([source])
+  @@index([level])
+  @@index([createdAt])
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum WorkspaceInvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum DmStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED_DEDUP
+  SKIPPED_RATE_LIMIT
+  SKIPPED_PLAN_LIMIT
+  SKIPPED_NO_MATCH
+}
+
+enum DmType {
+  COMMENT_REPLY
+  DIRECT_MESSAGE
+}
+
+enum WebhookStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+enum OperationalEventSource {
+  WORKER
+  TOKEN_REFRESH
+  HEALTH
+  SYSTEM
+}
+
+enum OperationalEventLevel {
+  INFO
+  WARNING
+  ERROR
+}
+
+model BackgroundJob {
+  id        String    @id @default(cuid())
+  name      String // e.g. "process-comment" or "process-postback"
+  payload   Json // The actual job data
+  status    JobStatus @default(PENDING)
+  attempts  Int       @default(0)
+  error     String?   @db.Text
+  runAt     DateTime  @default(now())
+  lockedAt  DateTime? // Used by worker to lock the job
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status, runAt])
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum AutomationTriggerType {
+  COMMENT
+  DIRECT_MESSAGE
+  STORY_REPLY
+  STORY_MENTION
+  STORY_REACTION
+  WELCOME
+  FAQ
+  GIVEAWAY
+  LEAD_MAGNET
+  COUPON
+}
+
+enum ConversationStep {
+  IDLE
+  AWAITING_EMAIL
+  AWAITING_PHONE
+  FLOW_NODE
+  COMPLETED
+}
+
+model ConversationState {
+  id                 String           @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+  userId             String // IGSID
+  step               ConversationStep @default(IDLE)
+  automationId       String?
+  activeFlowId       String?
+  activeNodeId       String?
+  isHumanHandover    Boolean          @default(false)
+  handoverAt         DateTime?
+  lastInteractedAt   DateTime         @default(now())
+  metadata           Json             @default("{}")
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+
+  @@unique([instagramAccountId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model Lead {
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+  userId             String // IGSID
+  username           String?
+  name               String?
+  email              String?
+  phone              String?
+  sourceAutomationId String?
+  customData         Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation Automation? @relation(fields: [sourceAutomationId], references: [id], onDelete: SetNull)
+  tags       LeadTag[]
+
+  @@index([workspaceId])
+  @@index([instagramAccountId])
+  @@index([userId])
+  @@index([email])
+  @@index([phone])
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String?  @default("#3b82f6")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  leads     LeadTag[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model LeadTag {
+  id        String   @id @default(cuid())
+  leadId    String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, tagId])
+  @@index([leadId])
+  @@index([tagId])
+}
+
+model DripCampaign {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?  @db.Text
+  triggerType String   @default("TAG_ADDED") // "TAG_ADDED" | "FORM_SUBMITTED" | "MANUAL" | "KEYWORD"
+  triggerKey  String?  // Tag name or keyword
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  steps       DripStep[]
+  enrollments DripEnrollment[]
+
+  @@index([workspaceId])
+}
+
+model DripStep {
+  id           String   @id @default(cuid())
+  campaignId   String
+  stepOrder    Int      @default(1)
+  delayMinutes Int      @default(60) // Delay after previous step or enrollment
+  messageType  String   @default("TEXT") // "TEXT" | "MEDIA" | "CAROUSEL" | "FLOW"
+  messageText  String?  @db.Text
+  mediaUrl     String?  @db.Text
+  flowId       String?
+  buttons      Json     @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  campaign DripCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([campaignId, stepOrder])
+}
+
+enum DripEnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  PAUSED
+}
+
+model DripEnrollment {
+  id                 String               @id @default(cuid())
+  campaignId         String
+  workspaceId        String
+  instagramAccountId String
+  userId             String // IGSID
+  currentStepIndex   Int                  @default(0)
+  nextRunAt          DateTime
+  status             DripEnrollmentStatus @default(ACTIVE)
+  lastError          String?              @db.Text
+  metadata           Json                 @default("{}")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  campaign DripCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId])
+  @@index([workspaceId])
+  @@index([status, nextRunAt])
+  @@index([userId])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  workspaceId String
+  title       String
+  description String?  @db.Text
+  price       Float    @default(0)
+  currency    String   @default("IRT") // "IRT" | "IRR" | "USD"
+  imageUrl    String?  @db.Text
+  buyUrl      String?  @db.Text
+  category    String?
+  sku         String?
+  stock       Int      @default(999)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([category])
+}
+
+model Giveaway {
+  id                String         @id @default(cuid())
+  workspaceId       String
+  automationId      String
+  title             String
+  maxTicketsPerUser Int            @default(1)
+  totalEntries      Int            @default(0)
+  drawnAt           DateTime?
+  status            GiveawayStatus @default(ACTIVE)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation   Automation            @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  participants GiveawayParticipant[]
+  winners      GiveawayWinner[]
+
+  @@index([workspaceId])
+  @@index([automationId])
+}
+
+enum GiveawayStatus {
+  ACTIVE
+  DRAWN
+  CANCELLED
+}
+
+model GiveawayParticipant {
+  id           String   @id @default(cuid())
+  giveawayId   String
+  userId       String // IGSID
+  username     String?
+  ticketNumber Int
+  entryTrigger String // "COMMENT" | "DM" | "STORY"
+  createdAt    DateTime @default(now())
+
+  giveaway Giveaway         @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
+  winners  GiveawayWinner[]
+
+  @@unique([giveawayId, userId])
+  @@index([giveawayId])
+  @@index([userId])
+}
+
+model GiveawayWinner {
+  id            String   @id @default(cuid())
+  giveawayId    String
+  participantId String
+  userId        String // IGSID
+  username      String?
+  ticketNumber  Int
+  winningRank   Int      @default(1)
+  drawnAt       DateTime @default(now())
+
+  giveaway    Giveaway            @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
+  participant GiveawayParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([giveawayId])
+}
+
+model CouponPool {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  automationId  String
+  name          String
+  defaultCode   String?
+  isUniqueCodes Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace  Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation Automation   @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  codes      CouponCode[]
+
+  @@index([workspaceId])
+  @@index([automationId])
+}
+
+model CouponCode {
+  id              String    @id @default(cuid())
+  poolId          String
+  code            String
+  isClaimed       Boolean   @default(false)
+  claimedByUserId String? // IGSID
+  claimedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  pool CouponPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  @@unique([poolId, code])
+  @@index([poolId])
+  @@index([claimedByUserId])
+}
+
+model FaqItem {
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+  question           String
+  keywords           Json     @default("[]")
+  answerText         String   @db.Text
+  linkUrl            String?
+  order              Int      @default(0)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([instagramAccountId])
+}
+
+enum AiProviderType {
+  GEMINI
+  OPENAI
+  ANTHROPIC
+  DEEPSEEK
+  GROK
+  OPENROUTER
+  OLLAMA
+  AZURE_OPENAI
+  AWS_BEDROCK
+  CUSTOM
+}
+
+model AiConfig {
+  id                  String         @id @default(cuid())
+  workspaceId         String         @unique
+  isEnabled           Boolean        @default(true)
+  provider            AiProviderType @default(GEMINI)
+  model               String         @default("gemini-2.5-flash")
+  apiKeyEncrypted     String?        @db.Text
+  baseUrl             String?
+  temperature         Float          @default(0.7)
+  maxTokens           Int            @default(1000)
+  topP                Float          @default(0.95)
+  topK                Int            @default(40)
+  brandVoice          String?        @db.Text
+  defaultTone         String         @default("friendly")
+  systemPrompt        String?        @db.Text
+  confidenceThreshold Float          @default(0.75)
+  manualApprovalMode  Boolean        @default(false)
+  spamFilterEnabled   Boolean        @default(true)
+  rateLimitPerMinute  Int            @default(60)
+  retryCount          Int            @default(3)
+  timeoutMs           Int            @default(15000)
+  safetySettings      Json           @default("{}")
+
+  activeHoursEnabled Boolean @default(false)
+  activeStartTime    String? @default("17:00")
+  activeEndTime      String? @default("08:00")
+  timezone           String  @default("Asia/Tehran")
+  offlineMessage     String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model KnowledgeDocument {
+  id          String   @id @default(cuid())
+  workspaceId String
+  title       String
+  sourceType  String // "DOC" | "PDF" | "URL" | "FAQ" | "CATALOG"
+  sourceUrl   String?
+  content     String   @db.Text
+  metadata    Json     @default("{}")
+  version     Int      @default(1)
+  isApproved  Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chunks    KnowledgeChunk[]
+
+  @@index([workspaceId])
+}
+
+model KnowledgeChunk {
+  id         String   @id @default(cuid())
+  documentId String
+  chunkIndex Int
+  content    String   @db.Text
+  embedding  Json // Number array vector representation
+  tokenCount Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  document KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
+
+model AiConversationMemory {
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String?
+  userId             String // IGSID or Channel User ID
+  memoryKey          String
+  memoryValue        String   @db.Text
+  confidence         Float    @default(1.0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId, memoryKey])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+enum GoalType {
+  LEAD_GENERATION
+  PRODUCT_SALES
+  APPOINTMENT_BOOKING
+  UPSELLING
+  FAQ_COMPLETION
+  QUALIFICATION
+  SUPPORT_RESOLUTION
+}
+
+enum GoalStatus {
+  IN_PROGRESS
+  ACHIEVED
+  FAILED
+  ABANDONED
+}
+
+model AiGoal {
+  id            String     @id @default(cuid())
+  workspaceId   String
+  userId        String // Customer IGSID
+  goalType      GoalType
+  title         String
+  targetValue   String?
+  progressScore Float      @default(0.0) // 0 to 100
+  status        GoalStatus @default(IN_PROGRESS)
+  metadata      Json       @default("{}")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([status])
+}
+
+model AiAuditLog {
+  id                  String   @id @default(cuid())
+  workspaceId         String
+  feature             String // "REPLIES" | "COMMENTS" | "GOALS" | "INTENT" | "STEP" | "RAG" | "IMPROVER"
+  provider            String
+  model               String
+  promptTokens        Int      @default(0)
+  completionTokens    Int      @default(0)
+  latencyMs           Int      @default(0)
+  confidenceScore     Float?
+  intentDetected      String?
+  securityCheckPassed Boolean  @default(true)
+  promptSanitized     Boolean  @default(false)
+  errorMessage        String?  @db.Text
+  createdAt           DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([feature])
+  @@index([createdAt])
+}
+
+model SystemFeatureFlag {
+  id          String   @id @default(cuid())
+  workspaceId String? // null for global defaults, or specific workspace ID
+  featureKey  String // e.g. "SPIKE_BUFFER", "HUMAN_HANDOVER", "SMART_DELAY", "AI_COMPRESSION", "DEDUP", "DLQ", "SMS_FALLBACK", "FUNNEL", "GLASS_UI"
+  isEnabled   Boolean  @default(true)
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workspaceId, featureKey])
+  @@index([featureKey])
+}
+
+model DeadLetterMessage {
+  id           String   @id @default(cuid())
+  workspaceId  String?
+  source       String // "WEBHOOK" | "DM_QUEUE" | "COMMENT_QUEUE" | "SMS_FALLBACK"
+  payload      Json
+  errorMessage String?  @db.Text
+  status       String   @default("FAILED") // "FAILED" | "RETRIED" | "RESOLVED" | "IGNORED"
+  attempts     Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model FunnelEvent {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  automationId String?
+  userId       String // IGSID
+  stage        String // "TRIGGERED" | "OPENING_DM_SENT" | "MAIN_DM_SENT" | "EMAIL_CAPTURED" | "PHONE_CAPTURED" | "COMPLETED" | "CONVERTED"
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([automationId])
+  @@index([userId])
+  @@index([stage])
+  @@index([createdAt])
+}
+
+// ─── Internal Lead Form Builder ────────────────────────────────────────────
+
+model LeadForm {
+  id          String   @id @default(cuid())
+  workspaceId String
+  title       String
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  fields      Json     @default("[]") // Array of LeadFormField definitions
+  settings    Json     @default("{}") // { redirectUrl, successMessage, notifyEmail, syncToCrm }
+  slug        String   @unique // URL-friendly identifier for public access
+  viewCount   Int      @default(0)
+  submitCount Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace   Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  submissions LeadFormSubmission[]
+
+  @@index([workspaceId])
+  @@index([slug])
+}
+
+model LeadFormSubmission {
+  id          String   @id @default(cuid())
+  formId      String
+  workspaceId String
+  data        Json // Key-value pairs of submitted field data
+  ipAddress   String?
+  userAgent   String?  @db.Text
+  referrer    String?
+  syncedToCrm Boolean  @default(false)
+  crmLeadId   Int?
+  createdAt   DateTime @default(now())
+
+  form      LeadForm  @relation(fields: [formId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([formId])
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
