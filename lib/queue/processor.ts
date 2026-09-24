@@ -1,25 +1,9 @@
 import { prisma } from "@/lib/db/client";
 import {
-  MetaApiError,
   RateLimitError,
-  PolicyBlockError,
-  CommentAlreadyRepliedError,
-  MessagingWindowExpiredError,
-  UserUnreachableError,
-  TokenExpiredError,
-  sendCommentReply,
-  sendDirectMessage,
-  sendDirectMessageWithLinkButton,
-  sendPrivateReply,
-  sendPrivateReplyWithButton,
-  sendPrivateReplyWithLinkButton,
-  isInDangerZone,
   isAtCriticalLimit,
-  calculateUsageBackoffMs,
-  getLastAppUsagePercent,
-  applyDangerZoneBackoff,
 } from "@/lib/meta/client";
-import { isAccountInCooldown, tripAccountCooldown } from "@/lib/meta/circuit-breaker";
+import { isAccountInCooldown } from "@/lib/meta/circuit-breaker";
 import { safeDecryptToken } from "@/lib/meta/oauth";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 import { reserveDMSlot } from "@/lib/utils/rate-limiter";
@@ -27,26 +11,18 @@ import {
   releaseWorkspaceDMReservation,
   reserveWorkspaceDMSend,
 } from "@/lib/billing/usage";
-import { recordWorkerAlert } from "@/lib/ops/worker-health";
-import { selectDmMessageVariation } from "@/lib/automation/ab-testing";
-import {
-  buildTrackedUrl,
-  renderMessageWithTracking,
-  renderMessageWithoutLink,
-} from "@/lib/tracking/message";
 import { ProcessCommentJob, ProcessPostbackJob, enqueueJob } from "./mysql-queue";
-import { executeFlowGraph } from "@/lib/flow/flow-engine";
-import type { FlowGraph } from "@/lib/flow/types";
+import {
+  formatError,
+  recordProcessorFailure,
+  handleCommentProcessingError,
+} from "./handlers/error-handler";
+import { handlePublicCommentReply } from "./handlers/public-reply";
+import { deliverPrivateReply, deliverPostbackReveal } from "./handlers/dm-delivery";
 
-function formatError(error: unknown): string {
-  if (error instanceof MetaApiError) {
-    return `Meta API Error ${error.code}: ${error.message}`;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Unknown error";
-}
+// Re-export error and alert helpers for complete backward compatibility
+export { formatError, recordProcessorFailure };
+
 export async function processComment(data: ProcessCommentJob, attemptsMade: number = 0): Promise<void> {
   const {
     instagramAccountId,
@@ -218,47 +194,13 @@ export async function processComment(data: ProcessCommentJob, attemptsMade: numb
     }
 
     // ── Public comment reply ─────────────────────────────────────────────
-    const replyPool =
-      Array.isArray(automation.publicReplyMessages) && automation.publicReplyMessages.length > 0
-        ? (automation.publicReplyMessages as string[])
-        : automation.publicReplyMessage
-          ? [automation.publicReplyMessage]
-          : [];
-    if (
-      automation.publicReplyEnabled &&
-      replyPool.length > 0 &&
-      !existingLog?.publicReplySentAt
-    ) {
-      try {
-        await applyDangerZoneBackoff();
-        const chosen = replyPool[Math.floor(Math.random() * replyPool.length)];
-        const publicReply = renderMessageWithTracking({
-          message: chosen,
-          commenterName,
-          trackedLinks: automation.trackedLinks,
-        });
-        await sendCommentReply(accessToken, commentId, publicReply);
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: { automationId: automation.id, commentId },
-          },
-          data: { publicReplySentAt: new Date(), publicReplyError: null },
-        });
-      } catch (error) {
-        console.error(
-          "[DM Processor] Public comment reply failed:",
-          formatError(error)
-        );
-        await prisma.dmLog
-          .update({
-            where: {
-              automationId_commentId: { automationId: automation.id, commentId },
-            },
-            data: { publicReplyError: formatError(error) },
-          })
-          .catch(() => {});
-      }
-    }
+    await handlePublicCommentReply({
+      automation,
+      accessToken,
+      commentId,
+      commenterName: commenterName ?? null,
+      existingLog,
+    });
 
     if (!needsDm) continue;
 
@@ -354,278 +296,28 @@ export async function processComment(data: ProcessCommentJob, attemptsMade: numb
       }
     }
 
-    const hasFlowGraph =
-      automation.flowGraph &&
-      typeof automation.flowGraph === "object" &&
-      Array.isArray((automation.flowGraph as any).nodes) &&
-      (automation.flowGraph as any).nodes.length > 0;
-
     try {
-      // ── Apply danger zone backoff before every Meta send ────────────────
-      await applyDangerZoneBackoff();
-
-      if (hasFlowGraph) {
-        const graphResults = await executeFlowGraph(
-          automation.flowGraph as unknown as FlowGraph,
-          {
-            workspaceId: automation.workspaceId,
-            instagramAccountId: automation.instagramAccount.instagramId,
-            userId: commenterId,
-            username: commenterName,
-            userMessage: commentText,
-          }
-        );
-
-        for (const step of graphResults) {
-          if (step.requiresInput) {
-            await prisma.conversationState.upsert({
-              where: {
-                instagramAccountId_userId: {
-                  instagramAccountId: automation.instagramAccount.instagramId,
-                  userId: commenterId,
-                },
-              },
-              create: {
-                workspaceId: automation.workspaceId,
-                instagramAccountId: automation.instagramAccount.instagramId,
-                userId: commenterId,
-                step: step.requiresInput,
-                automationId: automation.id,
-              },
-              update: {
-                step: step.requiresInput,
-                automationId: automation.id,
-              },
-            });
-            if (step.dmMessageToSend) {
-              const bodyText = renderMessageWithTracking({
-                message: step.dmMessageToSend,
-                commenterName,
-                trackedLinks: automation.trackedLinks,
-              });
-              await sendPrivateReply(
-                accessToken,
-                automation.instagramAccount.instagramId,
-                commentId,
-                bodyText
-              );
-            }
-            break;
-          }
-
-          if (step.dmMessageToSend) {
-            if (step.linkButton) {
-              await sendPrivateReplyWithLinkButton(
-                accessToken,
-                automation.instagramAccount.instagramId,
-                commentId,
-                step.dmMessageToSend,
-                step.linkButton.label,
-                step.linkButton.url
-              );
-            } else {
-              const dmMessage = renderMessageWithTracking({
-                message: step.dmMessageToSend,
-                commenterName,
-                trackedLinks: automation.trackedLinks,
-              });
-              await sendPrivateReply(
-                accessToken,
-                automation.instagramAccount.instagramId,
-                commentId,
-                dmMessage
-              );
-            }
-          }
-        }
-
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: {
-              automationId: automation.id,
-              commentId,
-            },
-          },
-          data: {
-            status: "SENT",
-            dmSentAt: new Date(),
-            errorMessage: null,
-          },
-        });
-        continue;
-      }
-
-      const useOpeningDm =
-        automation.openingDmEnabled &&
-        Boolean(automation.openingDmMessage) &&
-        Boolean(automation.openingDmButtonLabel);
-
-      if (useOpeningDm) {
-        const openingText = renderMessageWithTracking({
-          message: automation.openingDmMessage as string,
-          commenterName,
-          trackedLinks: [],
-        });
-        await sendPrivateReplyWithButton(
-          accessToken,
-          automation.instagramAccount.instagramId,
-          commentId,
-          openingText,
-          automation.openingDmButtonLabel as string,
-          `reveal:${automation.id}`
-        );
-      } else if (automation.trackedLinks[0]) {
-        const selectedMessage = selectDmMessageVariation(automation.dmMessage);
-        const bodyText =
-          renderMessageWithoutLink({
-            message: selectedMessage,
-            commenterName,
-          }) || "Here's your link:";
-        await sendPrivateReplyWithLinkButton(
-          accessToken,
-          automation.instagramAccount.instagramId,
-          commentId,
-          bodyText,
-          automation.linkButtonLabel || "Open link",
-          buildTrackedUrl(automation.trackedLinks[0].slug)
-        );
-      } else {
-        const selectedMessage = selectDmMessageVariation(automation.dmMessage);
-        const dmMessage = renderMessageWithTracking({
-          message: selectedMessage,
-          commenterName,
-          trackedLinks: automation.trackedLinks,
-        });
-        await sendPrivateReply(
-          accessToken,
-          automation.instagramAccount.instagramId,
-          commentId,
-          dmMessage
-        );
-      }
-
-      await prisma.dmLog.update({
-        where: {
-          automationId_commentId: {
-            automationId: automation.id,
-            commentId,
-          },
-        },
-        data: {
-          status: "SENT",
-          dmSentAt: new Date(),
-          errorMessage: null,
-        },
+      await deliverPrivateReply({
+        automation,
+        accessToken,
+        commentId,
+        commenterId,
+        commenterName: commenterName ?? null,
+        commentText,
       });
     } catch (error) {
-      await releaseWorkspaceDMReservation(
-        automation.workspaceId,
-        usage.periodStart
-      );
-
-      if (error instanceof PolicyBlockError) {
-        tripAccountCooldown(instagramAccountId, "PolicyBlock (Code 368)", 30 * 60 * 1000);
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: { automationId: automation.id, commentId },
-          },
-          data: {
-            status: "PENDING",
-            attempts: attemptsMade + 1,
-            errorMessage: "Temporary Meta policy cooldown active — retry scheduled in 30m",
-          },
-        });
-        await enqueueJob("process-comment", { ...data, requeueAttempt: requeueAttempt + 1 }, 30 * 60 * 1000);
-        continue;
-      }
-
-      if (error instanceof CommentAlreadyRepliedError) {
-        console.info(`[Processor] Comment ${commentId} already replied to via private reply.`);
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: { automationId: automation.id, commentId },
-          },
-          data: {
-            status: "SENT",
-            errorMessage: "Already replied to comment (Meta Subcode 2534015)",
-          },
-        });
-        continue;
-      }
-
-      if (error instanceof MessagingWindowExpiredError) {
-        console.warn(`[Processor] 7-day comment window or messaging window expired for comment ${commentId}.`);
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: { automationId: automation.id, commentId },
-          },
-          data: {
-            status: "FAILED",
-            errorMessage: "7-day comment window or messaging window expired (Meta policy)",
-          },
-        });
-        continue;
-      }
-
-      if (error instanceof UserUnreachableError) {
-        console.warn(`[Processor] User ${commenterId} is unreachable or has blocked DMs.`);
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: { automationId: automation.id, commentId },
-          },
-          data: {
-            status: "FAILED",
-            errorMessage: "User cannot be DM'd or has disabled message requests",
-          },
-        });
-        continue;
-      }
-
-      if (error instanceof TokenExpiredError) {
-        tripAccountCooldown(instagramAccountId, "TokenExpired (Code 190)", 60 * 60 * 1000);
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: { automationId: automation.id, commentId },
-          },
-          data: {
-            status: "FAILED",
-            errorMessage: "Instagram access token expired or revoked (Code 190)",
-          },
-        });
-        continue;
-      }
-
-      // ── Rate limit error: schedule a retry with backoff ──────────────────
-      if (error instanceof RateLimitError) {
-        const retryDelay = error.retryAfterMs;
-        tripAccountCooldown(instagramAccountId, `RateLimit (Retry in ${retryDelay}ms)`, retryDelay);
-        console.warn(`[Processor] Rate limit on comment ${commentId}. Requeuing in ${retryDelay}ms.`);
-        await prisma.dmLog.update({
-          where: {
-            automationId_commentId: { automationId: automation.id, commentId },
-          },
-          data: {
-            status: "PENDING",
-            attempts: attemptsMade + 1,
-            errorMessage: `Rate limited by Meta — retry in ${Math.round(retryDelay / 1000)}s`,
-          },
-        });
-        await enqueueJob("process-comment", { ...data, requeueAttempt: requeueAttempt + 1 }, retryDelay);
-        continue;
-      }
-
-      const msg = formatError(error);
-      if (
-        msg.includes("cannot be found") ||
-        msg.includes("cannot be DM'd") ||
-        msg.includes("does not exist") ||
-        msg.includes("Unsupported post request")
-      ) {
-        console.warn(`[Processor] Non-retryable Meta error on comment ${commentId}: ${msg}`);
-        continue;
-      }
-
-      throw error;
+      await handleCommentProcessingError({
+        error,
+        instagramAccountId,
+        automationId: automation.id,
+        workspaceId: automation.workspaceId,
+        commentId,
+        commenterId,
+        attemptsMade,
+        requeueAttempt,
+        data,
+        periodStart: usage.periodStart,
+      });
     }
   }
 }
@@ -740,56 +432,13 @@ export async function processPostback(data: ProcessPostbackJob, attemptsMade: nu
     return;
   }
 
-  const primaryLink = automation.trackedLinks[0];
-
   try {
-    // Apply danger zone backoff before sending reveal message
-    await applyDangerZoneBackoff();
-
-    if (primaryLink) {
-      const bodyText =
-        renderMessageWithoutLink({
-          message: automation.dmMessage,
-          commenterName,
-        }) || "Here's your link:";
-      await sendDirectMessageWithLinkButton(
-        accessToken,
-        automation.instagramAccount.instagramId,
-        userId,
-        bodyText,
-        automation.linkButtonLabel || "Open link",
-        buildTrackedUrl(primaryLink.slug)
-      );
-    } else {
-      const revealMessage = renderMessageWithTracking({
-        message: automation.dmMessage,
-        commenterName,
-        trackedLinks: automation.trackedLinks,
-      });
-      await sendDirectMessage(
-        accessToken,
-        automation.instagramAccount.instagramId,
-        userId,
-        revealMessage
-      );
-    }
-    await prisma.dmLog.upsert({
-      where: {
-        automationId_commentId: { automationId: automation.id, commentId: dedupeId },
-      },
-      create: {
-        workspaceId: automation.workspaceId,
-        automationId: automation.id,
-        instagramAccountId: automation.instagramAccountId,
-        commenterId: userId,
-        commenterName,
-        commentText: "(button tap)",
-        commentId: dedupeId,
-        type: "DIRECT_MESSAGE",
-        status: "SENT",
-        dmSentAt: new Date(),
-      },
-      update: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
+    await deliverPostbackReveal({
+      automation,
+      accessToken,
+      userId,
+      commenterName,
+      dedupeId,
     });
   } catch (error) {
     await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
@@ -820,50 +469,5 @@ export async function processPostback(data: ProcessPostbackJob, attemptsMade: nu
       update: { status: "FAILED", errorMessage: formatError(error) },
     });
     throw error;
-  }
-}
-
-export async function recordProcessorFailure(
-  name: string,
-  data: any,
-  attemptsMade: number,
-  error: Error
-) {
-  try {
-    const instagramAccountId = data?.instagramAccountId;
-    const commentId = data?.commentId ?? null;
-    const account = instagramAccountId
-      ? await prisma.instagramAccount.findUnique({
-          where: { instagramId: instagramAccountId },
-          select: { workspaceId: true },
-        })
-      : null;
-
-    await prisma.operationalEvent.create({
-      data: {
-        workspaceId: account?.workspaceId ?? null,
-        source: "WORKER",
-        level: "ERROR",
-        message: `DM processor job failed: ${error.message}`,
-        payload: {
-          jobName: name,
-          attemptsMade,
-          instagramAccountId: instagramAccountId ?? null,
-          commentId,
-        },
-      },
-    });
-
-    await recordWorkerAlert({
-      level: "error",
-      message: error.message,
-      instagramAccountId,
-      commentId: commentId ?? undefined,
-    });
-  } catch (recordError) {
-    console.error(
-      "[DM Processor] Failed to record failure:",
-      formatError(recordError)
-    );
   }
 }
