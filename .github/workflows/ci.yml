@@ -27,7 +27,7 @@ jobs:
       - name: Generate Prisma client
         run: npm run db:generate
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/instrareply
+          DATABASE_URL: mysql://root:root@localhost:3306/openreply
 
       - name: Typecheck
         run: npm run typecheck
@@ -35,14 +35,16 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: OpenReply Governance Check
+        run: node scripts/governance_check.mjs
+
       - name: Run tests
         run: npm test
 
       - name: Build
         run: npm run build
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/instrareply
-          REDIS_URL: redis://localhost:6379
+          DATABASE_URL: mysql://root:root@localhost:3306/openreply
           NEXTAUTH_URL: http://localhost:3000
           NEXTAUTH_SECRET: test-secret-for-ci-build
           CRON_SECRET: test-secret-for-ci-cron

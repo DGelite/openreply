@@ -2,111 +2,143 @@
 
 # OpenReply
 
-Open-sourced ManyChat for Instagram comment-to-DM automation.
+Open-source Instagram comment-to-DM automation & AI reply engine.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/diwenne/openreply?style=flat&color=black)](https://github.com/diwenne/openreply/stargazers)
 [![Built with Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
+[![Database: MariaDB](https://img.shields.io/badge/Database-MariaDB_10.11-blue.svg)](https://mariadb.org)
+[![Meta Graph API](https://img.shields.io/badge/Meta_API-v25.0-blue.svg)](https://developers.facebook.com)
+[![Tests Passing](https://img.shields.io/badge/Tests-112%20passing-brightgreen.svg)](__tests__)
 
 </div>
 
-Someone comments `LINK` on your reel, and they get a DM with your link a second later. That is the whole idea. OpenReply watches the comments on your Instagram posts, and when a comment matches a keyword you set, it sends that person a private reply through the official Meta API. You can also post a public reply under the comment at the same time.
+Someone comments `PRICE` or `LINK` on your reel, and they get a DM with your link or answers a second later. OpenReply watches comments on your Instagram posts, and when a comment matches your keywords, it sends that user a private reply through the official Meta Graph API v25.0. It also supports optional public comment replies, AI-powered conversational smart responses, drip campaigns, and lead capture.
 
-ManyChat does this and charges a monthly fee. OpenReply is the same core feature, free, running on your own infrastructure, with no seat limits and no plan caps.
+Self-hosted, free, running on your own infrastructure, with no seat limits and no artificial plan caps.
 
-> If this saves you a subscription or a weekend of building, a star on the repo genuinely helps other people find it.
-
-## Why this exists
-
-Comment-to-DM is one feature, but every tool that offers it wants a recurring subscription for it. The actual work is a webhook, a keyword match, and one API call to Meta. That does not need to cost anything to run for a single account.
-
-OpenReply is built around Meta's official Instagram private replies. It does not scrape, it does not automate a browser, and it never asks for an Instagram password. That keeps your account inside Meta's rules, which matters if you care about not getting flagged.
+---
 
 ## Features
 
-- Keyword to DM. Match one or many keywords per post, whole-word or partial.
-- Optional public reply. Post a visible comment reply on top of the DM.
-- Tracked links. Swap a link for a tracked redirect and see clicks and CTR per campaign.
-- Personalization. Use `{username}` in your message to greet the commenter by name.
-- Per-account rate limiting. Stays under Meta's documented cap of 750 private replies per hour, and queues the overflow instead of dropping it.
-- Multiple Instagram accounts. Connect several professional accounts under one workspace, each with its own limits.
-- Workspaces and roles. Owner, admin, and member roles with invite links, useful if you run this for clients.
-- Campaign templates. Start from a preset instead of a blank form.
-- Inbox. Read your Instagram DM conversations and reply from the dashboard, inside Meta's 24-hour messaging window. Cached so it loads instantly on repeat visits.
-- DM logs. Every send, skip, and failure is logged with a reason.
-- Self-comment filtering. Your own comments never trigger a reply, since Meta rejects DMing yourself anyway.
+- **Keyword to DM:** Match one or many keywords per post, with Persian & Arabic normalization and slang support.
+- **Optional Public Reply:** Post a visible comment reply alongside the private DM.
+- **AI Smart Replies:** Google Gemini & OpenAI integration for dynamic intent recognition and context-aware responses.
+- **Visual Flow Builder:** Drag-and-drop interactive flow canvas powered by `@xyflow/react`.
+- **CRM & Booking Mesh:** Resilient bi-directional sync with PHP Booking CRM via circuit-broken SDK.
+- **Drip Campaigns:** Scheduled follow-up sequences strictly respecting Meta's 24-hour messaging policy.
+- **Meta v25.0 Anti-Ban Circuit Breaker:** Automatic cool-off protection against Meta code 368 rate-limit flags.
+- **High-Throughput MariaDB Queue:** Fully transactional queue engine (`BackgroundJob`). Zero Redis dependency.
+- **Tracked Links & Analytics:** Real-time click tracking and CTR analytics for campaign links.
 
-## How it works
+---
 
-1. Someone comments on your Instagram post or reel.
-2. Meta sends a webhook to your OpenReply instance.
-3. OpenReply checks the comment against your active campaigns.
-4. On a keyword match, it queues a job.
-5. A background worker sends the private reply, and the public reply if you enabled one.
+## Tech Stack
 
-The web app receives the webhook and serves the dashboard. A separate worker process does the sending, because the send has to survive rate limits and retries. Both talk to the same Postgres and Redis.
+- **Framework:** Next.js 16.2.6 (App Router) & React 19.2.4
+- **Language:** TypeScript 5
+- **Database & ORM:** MariaDB 10.11+ / MySQL with Prisma ORM 7.9 (`@prisma/adapter-mariadb`)
+- **Queue Engine:** MySQL-backed concurrent queue (`lib/queue/mysql-queue.ts`)
+- **Authentication:** NextAuth v5 with role-based access control (`SUPER_ADMIN`, `ADMIN`, `MEMBER`)
+- **Containerization:** Multi-stage Dockerfile (`node:20-alpine`, non-root user `nextjs`, `tini`)
 
-## Quick start
+---
 
-You need a few free accounts before anything works: a Meta developer app, a Resend account for login emails, and somewhere to host (Vercel for the web app, Railway for the worker plus Postgres and Redis). The Instagram account you connect has to be a Business or Creator account, not a personal one.
+## Local Development
 
-The honest version: the code deploys in minutes, but the Meta app setup is the part that takes real time. Read [docs/setup.md](docs/setup.md) before you start. It is the single setup guide, covering hosting, your domain, the environment, and every Meta wrong turn so you do not have to find them yourself.
+### Prerequisites
+- Node.js 20+ (LTS)
+- Local MariaDB / MySQL server (e.g. WampServer or native service)
 
-### Deploy the web app
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/diwenne/openreply)
-
-### Run it locally
-
+### Steps
 ```bash
 git clone https://github.com/diwenne/openreply.git
 cd openreply
 npm install
-cp .env.example .env      # then fill in the values, see docs/setup.md
-docker-compose up -d      # starts Postgres and Redis
-npm run db:migrate
-npm run dev               # web app on http://localhost:3000
-npm run worker            # in a second terminal, this sends the DMs
+
+# 1. Configure environment variables
+cp .env.example .env
+# Edit .env and set DATABASE_URL (e.g. mysql://root:@127.0.0.1:3306/digitale_digitaleliteisntal)
+
+# 2. Run automated pre-flight audit
+npm run check
+
+# 3. Synchronize database baseline migrations
+npm run db:baseline
+
+# 4. Start development web server
+npm run dev
+
+# 5. (Optional) Run dedicated background worker in separate terminal
+npm run worker
 ```
 
-Two processes, always. `npm run dev` serves the app and receives webhooks. `npm run worker` is what actually sends the messages. If comments come in and no DM ever arrives, the worker is the first thing to check.
+---
 
-Full environment variables and the production layout are in [docs/setup.md](docs/setup.md).
+## Linux VPS Quick Launch (Production)
 
-## Set it up with your AI assistant
+Deploying to an Ubuntu/Debian Linux VPS with Docker Engine takes 2 minutes:
 
-If you use Claude Code, Cursor, or a similar tool, the Meta setup is a lot faster with an assistant driving it. There is a ready-made prompt in the [Set it up with an AI assistant](docs/setup.md#set-it-up-with-an-ai-assistant) section of the setup guide. Paste it into your assistant inside a clone of this repo, hand over your keys as it asks, and it will walk you through connecting Instagram and going live.
+```bash
+# 1. Clone repository
+git clone https://github.com/diwenne/openreply.git
+cd openreply
 
-## Tech stack
+# 2. Setup production environment
+cp .env.example .env
+nano .env
 
-- Next.js 16 and React 19 for the web app and API routes
-- Prisma 7 with PostgreSQL
-- BullMQ on Redis for the send queue and the worker
-- Auth.js (NextAuth) with email magic links through Resend
-- Tailwind CSS for the interface
-- The official Instagram API with Instagram Login
+# 3. Pre-flight check
+./deploy/quick-launch.sh --check
 
-## Contributing
+# 4. Launch entire stack (Web, Worker, MariaDB)
+./deploy/quick-launch.sh --up
 
-Issues and pull requests are welcome. If you hit a Meta quirk that is not in the setup guide, a PR that documents it is worth as much as a code fix, because that is where everyone loses time.
+# 5. Verify status and health probe
+./deploy/quick-launch.sh --status
+```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+### Quick Launch Commands Reference
 
-## Credits
+```bash
+./deploy/quick-launch.sh --check    # Audit host, docker, .env, ports
+./deploy/quick-launch.sh --up       # Build images, baseline database, and start containers
+./deploy/quick-launch.sh --update   # Zero-data-loss update with automated pre-backup
+./deploy/quick-launch.sh --status   # Check container status and /api/health probe
+./deploy/quick-launch.sh --logs     # Stream logs (e.g., ./deploy/quick-launch.sh --logs worker)
+./deploy/quick-launch.sh --backup   # Create timestamped, compressed MariaDB backup
+./deploy/quick-launch.sh --restore  # Safely restore backup with interactive confirmation
+./deploy/quick-launch.sh --rollback # Display disaster recovery rollback instructions
+```
 
-Built and maintained by Diwen Huang.
+---
 
-- GitHub: [@diwenne](https://github.com/diwenne)
-- Website: [diwenhuang.ca](https://diwenhuang.ca)
-- X: [@diwenne](https://x.com/diwenne)
-- Instagram: [@devdiwen](https://instagram.com/devdiwen)
+## Testing & Quality Assurance
 
-OpenReply is a fork of [instagram-comment-to-dm](https://github.com/im-anishraj/instagram-comment-to-dm) by [Anish Raj](https://github.com/im-anishraj), also MIT licensed. The billing layer and plan caps were removed, and the setup was documented from scratch.
+```bash
+# Type check with zero errors
+npm run typecheck
 
-## Star the repo
+# Run full Vitest suite (112 tests across 10 test suites)
+npx vitest run
 
-If OpenReply is useful to you, star it. It is the simplest way to help the project reach the next person looking for a free way to do this.
+# Run code governance rules check
+node scripts/governance_check.mjs
+
+# Build production bundle
+npm run build
+```
+
+---
+
+## Documentation
+
+- [VPS Quick Launch Guide](docs/vps-quick-launch.md) — Comprehensive beginner-friendly VPS setup, Nginx reverse proxy, and SSL.
+- [Database & Migrations Guide](docs/database-migration.md) — MariaDB baseline synchronization and Prisma schema workflow.
+- [Backup & Disaster Recovery](docs/backup-restore.md) — Automated database dumps, retention rules, and restore safety gates.
+- [Meta App Setup & Permissions](docs/setup.md) — Meta Developer Portal, Webhooks, and permissions configuration.
+
+---
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE).

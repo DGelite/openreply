@@ -1,4 +1,4 @@
-import { dequeueBatch, completeJob, failJob, POSTBACK_JOB_NAME } from "./mysql-queue";
+import { dequeueBatch, completeJob, failJob, POSTBACK_JOB_NAME, queueEvents } from "./mysql-queue";
 import { processComment, processPostback, recordProcessorFailure } from "./processor";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
@@ -13,6 +13,31 @@ const globalForWorker = globalThis as unknown as {
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = Number(process.env.COMMENT_POLL_INTERVAL_MS ?? 5 * 60_000);
 const DRIP_INTERVAL_MS = 20_000; // Check and fire scheduled drip sequence steps every 20s
+
+function waitForJobOrTimeout(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout;
+
+    const onEnqueued = () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+
+    timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        queueEvents.off("jobEnqueued", onEnqueued);
+        resolve();
+      }
+    }, ms);
+
+    queueEvents.once("jobEnqueued", onEnqueued);
+  });
+}
 
 // ── Concurrency & Throughput Settings ─────────────────────────────────────
 // ManyChat processes webhooks in real-time. We match that by:
@@ -84,25 +109,61 @@ export function startInternalWorker() {
 
   // 4. High-Performance Parallel Batch Processing Loop
   async function processLoop() {
+    let idleCycles = 0;
+    const MIN_POLL_MS = Number(process.env.WORKER_POLL_MIN_MS ?? 500);
+    const MAX_POLL_MS = Number(process.env.WORKER_POLL_MAX_MS ?? 2500);
+
     while (true) {
       try {
         const jobs = await dequeueBatch(BATCH_SIZE);
         if (!jobs || jobs.length === 0) {
-          // No pending jobs — wait 500ms before polling again
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          idleCycles++;
+          // Adaptive backoff: 500ms -> 750ms -> 1000ms ... up to MAX_POLL_MS
+          // Instantly wakes up (0ms) when a job is enqueued via queueEvents
+          const pollDelay = Math.min(MIN_POLL_MS + (idleCycles - 1) * 250, MAX_POLL_MS);
+          await waitForJobOrTimeout(pollDelay);
           continue;
         }
+
+        // Active jobs found — reset idle backoff immediately
+        idleCycles = 0;
 
         console.log(
           `[Worker Loop] Processing batch of ${jobs.length} jobs (stagger: ${JOB_STAGGER_MS}ms)`
         );
 
-        // Process all jobs in the batch concurrently with staggered starts.
-        await Promise.allSettled(
-          jobs.map(async (job, index) => {
-            if (index > 0) {
+        // Key-Partitioned Concurrency:
+        // 1. Jobs for the SAME conversation/user run strictly in FIFO order (Job 2 awaits Job 1).
+        // 2. Jobs for the SAME account respect Meta rate-limit stagger.
+        // 3. Jobs for DIFFERENT users/accounts run concurrently in parallel.
+        const conversationChains = new Map<string, Promise<void>>();
+        const accountJobIndices = new Map<string, number>();
+
+        const jobPromises = jobs.map((job: any) => {
+          const payloadObj =
+            typeof job.payload === "object" && job.payload !== null
+              ? (job.payload as Record<string, unknown>)
+              : null;
+          const accId =
+            typeof payloadObj?.instagramAccountId === "string"
+              ? payloadObj.instagramAccountId
+              : "global";
+          const targetId =
+            (typeof payloadObj?.userId === "string" && payloadObj.userId) ||
+            (typeof payloadObj?.commenterId === "string" && payloadObj.commenterId) ||
+            (typeof payloadObj?.recipientId === "string" && payloadObj.recipientId) ||
+            "default";
+
+          const conversationKey = `${accId}:${targetId}`;
+          const orderForAccount = accountJobIndices.get(accId) ?? 0;
+          accountJobIndices.set(accId, orderForAccount + 1);
+
+          const previousInConversation = conversationChains.get(conversationKey) || Promise.resolve();
+
+          const currentExecution = previousInConversation.then(async () => {
+            if (orderForAccount > 0) {
               await new Promise((resolve) =>
-                setTimeout(resolve, index * JOB_STAGGER_MS)
+                setTimeout(resolve, orderForAccount * JOB_STAGGER_MS)
               );
             }
             try {
@@ -122,8 +183,13 @@ export function startInternalWorker() {
                 error
               );
             }
-          })
-        );
+          });
+
+          conversationChains.set(conversationKey, currentExecution);
+          return currentExecution;
+        });
+
+        await Promise.allSettled(jobPromises);
       } catch (loopError) {
         console.error("[Worker Loop] Error in main processing loop:", loopError);
         await new Promise((resolve) => setTimeout(resolve, 5000));

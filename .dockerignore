@@ -1,0 +1,69 @@
+# Git & CI
+.git
+.github
+.agent
+.agents
+
+# Dependencies & Build artifacts
+node_modules
+.next
+out
+build
+dist
+coverage
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment & Secrets
+.env
+.env*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+
+# Archives, Binaries & Backups
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.exe
+*.dll
+*.so
+*.dylib
+cloudflared*
+backups
+deploy/backups
+
+# Database Dumps & SQL (prevent committing or baking into images)
+*.sql
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+deploy/init-db
+
+# Logs & Debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+build-output.txt
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+.vscode
+.idea
+
+# Documentation & Tests (keep production images lean)
+docs
+__tests__
+tests

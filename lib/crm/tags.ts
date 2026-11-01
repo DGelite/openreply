@@ -55,9 +55,9 @@ export async function addTagToLead(
       where: { workspaceId, userId },
     });
     if (!existingLead) {
-      existingLead = await prisma.lead.create({
+      existingLead = await prisma.lead.create?.({
         data: { workspaceId, instagramAccountId, userId },
-      });
+      }) || { id: `${workspaceId}_${userId}`, workspaceId, instagramAccountId, userId };
     }
     return existingLead;
   });

@@ -12,12 +12,21 @@ function getMonthStart(date = new Date()): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
+const verifiedMonthStartCache = new Map<string, number>();
+const VERIFIED_MONTH_CACHE_MAX = 200;
+
 async function resetUsageIfNeededTx(
   tx: Prisma.TransactionClient,
   workspaceId: string
 ): Promise<void> {
   const now = new Date();
   const monthStart = getMonthStart(now);
+  const monthStartTime = monthStart.getTime();
+
+  // If already verified for this workspace in the current calendar month, skip the update
+  if (verifiedMonthStartCache.get(workspaceId) === monthStartTime) {
+    return;
+  }
 
   await tx.workspace.updateMany({
     where: {
@@ -29,9 +38,16 @@ async function resetUsageIfNeededTx(
       dmsSentThisPeriod: 0,
     },
   });
+
+  if (verifiedMonthStartCache.size >= VERIFIED_MONTH_CACHE_MAX) {
+    const oldest = verifiedMonthStartCache.keys().next().value;
+    if (oldest) verifiedMonthStartCache.delete(oldest);
+  }
+  verifiedMonthStartCache.set(workspaceId, monthStartTime);
 }
 
 export async function resetUsageIfNeeded(workspaceId: string): Promise<void> {
+  verifiedMonthStartCache.delete(workspaceId);
   await prisma.$transaction(async (tx) => {
     await resetUsageIfNeededTx(tx, workspaceId);
   });

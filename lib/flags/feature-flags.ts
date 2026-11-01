@@ -35,15 +35,47 @@ export const DEFAULT_FEATURE_CONFIGS: Record<FeatureKey, { isEnabled: boolean; c
   GLASS_UI: { isEnabled: true, config: { enableAnimations: true, theme: "dark-glass" } },
 };
 
+interface CachedFlag {
+  flag: any;
+  expiresAt: number;
+}
+
+const flagCache = new Map<string, CachedFlag>();
+const FLAG_CACHE_TTL_MS = 30_000; // 30 seconds TTL
+const FLAG_CACHE_MAX_ENTRIES = 200;
+
+export function clearFeatureFlagCache(): void {
+  flagCache.clear();
+}
+
+async function getOrFetchFlag(featureKey: FeatureKey, workspaceId?: string) {
+  const key = `${featureKey}:${workspaceId || "global"}`;
+  const now = Date.now();
+  const cached = flagCache.get(key);
+  if (cached && now < cached.expiresAt) {
+    return cached.flag;
+  }
+
+  const flag = await prisma.systemFeatureFlag.findFirst({
+    where: {
+      featureKey,
+      OR: [{ workspaceId: workspaceId || null }, { workspaceId: null }],
+    },
+    orderBy: { workspaceId: "desc" },
+  });
+
+  if (flagCache.size >= FLAG_CACHE_MAX_ENTRIES) {
+    const oldestKey = flagCache.keys().next().value;
+    if (oldestKey) flagCache.delete(oldestKey);
+  }
+
+  flagCache.set(key, { flag, expiresAt: now + FLAG_CACHE_TTL_MS });
+  return flag;
+}
+
 export async function isFeatureEnabled(featureKey: FeatureKey, workspaceId?: string): Promise<boolean> {
   try {
-    const flag = await prisma.systemFeatureFlag.findFirst({
-      where: {
-        featureKey,
-        OR: [{ workspaceId: workspaceId || null }, { workspaceId: null }],
-      },
-      orderBy: { workspaceId: "desc" },
-    });
+    const flag = await getOrFetchFlag(featureKey, workspaceId);
     return flag ? flag.isEnabled : DEFAULT_FEATURE_CONFIGS[featureKey]?.isEnabled ?? true;
   } catch (error) {
     console.error(`Error checking feature flag ${featureKey}:`, error);
@@ -56,13 +88,7 @@ export async function getFeatureConfig<K extends FeatureKey>(
   workspaceId?: string
 ): Promise<FeatureConfigMap[K]> {
   try {
-    const flag = await prisma.systemFeatureFlag.findFirst({
-      where: {
-        featureKey,
-        OR: [{ workspaceId: workspaceId || null }, { workspaceId: null }],
-      },
-      orderBy: { workspaceId: "desc" },
-    });
+    const flag = await getOrFetchFlag(featureKey, workspaceId);
     if (flag && flag.config && typeof flag.config === "object") {
       return { ...DEFAULT_FEATURE_CONFIGS[featureKey].config, ...(flag.config as any) };
     }
@@ -78,6 +104,8 @@ export async function setFeatureFlag(
   config?: any,
   workspaceId?: string
 ) {
+  flagCache.clear();
+
   const existing = await prisma.systemFeatureFlag.findFirst({
     where: {
       featureKey,

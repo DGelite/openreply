@@ -41,3 +41,5 @@ export const config = {
     "/login",
   ],
 };
+
+export const middleware = proxy;

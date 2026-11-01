@@ -62,6 +62,7 @@ export class SmsIrClient {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const data = await response.json();
@@ -92,6 +93,7 @@ export class SmsIrClient {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const data = await response.json();
@@ -109,6 +111,7 @@ export class SmsIrClient {
     const response = await fetch(`${this.baseUrl}credit`, {
       method: "GET",
       headers: this.getHeaders(),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const data = await response.json();

@@ -356,7 +356,7 @@ export default function SettingsPage() {
             <input
               type="text"
               name="apiUrl"
-              defaultValue={process.env.NEXT_PUBLIC_PHP_ADMIN_API_URL || "http://localhost/admin.php"}
+              defaultValue={process.env.NEXT_PUBLIC_BOOKING_API_URL || process.env.NEXT_PUBLIC_PHP_ADMIN_API_URL || "http://localhost/admin.php"}
               placeholder="http://localhost/admin.php"
               className="w-full rounded border border-border bg-surface px-4 py-2 text-sm text-foreground outline-none transition-colors focus:border-accent/40"
               required
@@ -370,10 +370,9 @@ export default function SettingsPage() {
             <input
               type="password"
               name="apiSecret"
-              defaultValue={process.env.NEXT_PUBLIC_PHP_ADMIN_API_SECRET || "de_secure_api_key_2026_x892n3m"}
-              placeholder="de_secure_api_key_..."
+              defaultValue=""
+              placeholder="••••••••"
               className="w-full rounded border border-border bg-surface px-4 py-2 text-sm text-foreground outline-none transition-colors focus:border-accent/40"
-              required
             />
           </div>
 

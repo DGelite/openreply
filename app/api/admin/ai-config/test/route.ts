@@ -1,13 +1,22 @@
 import { NextResponse } from "next/server";
 import { getAiEngine } from "@/lib/ai/factory";
+import { getCurrentWorkspaceContext, canManageWorkspace } from "@/lib/workspace-access";
 
 export async function POST(req: Request) {
   try {
-    const { workspaceId } = await req.json();
-
-    if (!workspaceId) {
-      return NextResponse.json({ error: "Workspace ID required" }, { status: 400 });
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    if (!canManageWorkspace(context.role)) {
+      return NextResponse.json(
+        { error: "فقط مدیران اجازه تست تنظیمات هوش مصنوعی را دارند." },
+        { status: 403 }
+      );
+    }
+
+    const workspaceId = context.workspaceId;
 
     // Attempt to get the AI engine and perform a simple prompt test
     const aiEngine = await getAiEngine(workspaceId);

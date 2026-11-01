@@ -99,13 +99,13 @@ export class PhpBookingClient {
   private failureReason = "";
 
   constructor(
-    baseUrl: string = process.env.PHP_ADMIN_API_URL || "http://localhost/api_openreply.php",
+    baseUrl: string = process.env.BOOKING_API_URL || process.env.PHP_ADMIN_API_URL || "http://localhost/api_openreply.php",
     apiSecret: string = process.env.PHP_ADMIN_API_SECRET || "de_secure_api_key_2026_x892n3m",
     timeoutMs: number = DEFAULT_TIMEOUT_MS
   ) {
     if (!baseUrl || !baseUrl.startsWith("http")) {
       throw new Error(
-        `PhpBookingClient: Invalid base URL "${baseUrl}". Set PHP_ADMIN_API_URL in your .env file.`
+        `PhpBookingClient: Invalid base URL "${baseUrl}". Set BOOKING_API_URL or PHP_ADMIN_API_URL in your .env file.`
       );
     }
     try {

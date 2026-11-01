@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentWorkspaceId, getCurrentUserId } from "@/lib/auth";
+import { getCurrentWorkspaceContext, canManageWorkspace } from "@/lib/workspace-access";
 import { prisma } from "@/lib/db/client";
 import { DEFAULT_FEATURE_CONFIGS, FeatureKey, setFeatureFlag } from "@/lib/flags/feature-flags";
 
@@ -74,11 +74,17 @@ const FEATURE_METADATA: Record<
 
 export async function GET() {
   try {
-    const workspaceId = await getCurrentWorkspaceId();
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
 
     const existingFlags = await prisma.systemFeatureFlag.findMany({
       where: {
-        OR: [{ workspaceId: workspaceId || null }, { workspaceId: null }],
+        OR: [{ workspaceId: context.workspaceId }, { workspaceId: null }],
       },
     });
 
@@ -121,7 +127,21 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const workspaceId = await getCurrentWorkspaceId();
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    if (!canManageWorkspace(context.role)) {
+      return NextResponse.json(
+        { success: false, error: "Forbidden: Admin access required" },
+        { status: 403 }
+      );
+    }
+
     const body = await req.json();
     const { key, featureKey, id, isEnabled, config } = body;
 
@@ -130,7 +150,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Feature key required" }, { status: 400 });
     }
 
-    const flag = await setFeatureFlag(targetKey, Boolean(isEnabled), config, workspaceId || undefined);
+    const flag = await setFeatureFlag(targetKey, Boolean(isEnabled), config, context.workspaceId);
 
     return NextResponse.json({ success: true, flag });
   } catch (error: any) {

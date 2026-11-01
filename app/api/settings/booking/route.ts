@@ -9,15 +9,16 @@ export async function GET() {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const apiUrl = process.env.PHP_ADMIN_API_URL || "http://localhost/admin.php";
-    const apiSecret = process.env.PHP_ADMIN_API_SECRET || "de_secure_api_key_2026_x892n3m";
+    const apiUrl = process.env.BOOKING_API_URL || process.env.PHP_ADMIN_API_URL || "http://localhost/admin.php";
+    const apiSecret = process.env.PHP_ADMIN_API_SECRET;
 
     return NextResponse.json({
       success: true,
       data: {
         apiUrl,
-        apiSecret,
-        enabled: true,
+        apiSecret: apiSecret ? "••••••••" : "",
+        isConfigured: Boolean(apiSecret),
+        enabled: process.env.PHP_BOOKING_ENABLED !== "false",
       },
     });
   } catch (error) {
@@ -34,11 +35,23 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { apiUrl, apiSecret } = body;
+    let { apiUrl, apiSecret } = body;
 
-    if (!apiUrl || !apiSecret) {
+    if (!apiUrl) {
       return NextResponse.json(
-        { success: false, error: "آدرس API و کلید راز الزامی است." },
+        { success: false, error: "آدرس API الزامی است." },
+        { status: 400 }
+      );
+    }
+
+    // If placeholder/masked secret was submitted, fallback to server configured secret
+    if (!apiSecret || apiSecret.includes("••••")) {
+      apiSecret = process.env.PHP_ADMIN_API_SECRET;
+    }
+
+    if (!apiSecret) {
+      return NextResponse.json(
+        { success: false, error: "کلید راز امنیتی الزامی است." },
         { status: 400 }
       );
     }

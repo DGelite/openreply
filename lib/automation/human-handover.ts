@@ -5,24 +5,31 @@ export async function checkHumanHandoverState(
   workspaceId: string,
   instagramAccountId: string,
   userId: string,
-  incomingText?: string
+  incomingText?: string,
+  preloadedState?: { isHumanHandover?: boolean } | null
 ): Promise<{ isHandover: boolean; reason?: string }> {
   const enabled = await isFeatureEnabled("HUMAN_HANDOVER", workspaceId);
   if (!enabled) {
     return { isHandover: false };
   }
 
-  // Check existing handover state
-  const state = await prisma.conversationState.findUnique({
-    where: {
-      instagramAccountId_userId: {
-        instagramAccountId,
-        userId,
-      },
-    },
-  });
+  // Check existing handover state (use preloadedState if provided to skip DB query)
+  const isHandover =
+    preloadedState !== undefined
+      ? Boolean(preloadedState?.isHumanHandover)
+      : (
+          await prisma.conversationState.findUnique({
+            where: {
+              instagramAccountId_userId: {
+                instagramAccountId,
+                userId,
+              },
+            },
+            select: { isHumanHandover: true },
+          })
+        )?.isHumanHandover;
 
-  if (state?.isHumanHandover) {
+  if (isHandover) {
     return { isHandover: true, reason: "Active handover session enabled by admin or keyword" };
   }
 

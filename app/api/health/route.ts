@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { getWorkerHealth } from "@/lib/ops/worker-health";
 
@@ -53,7 +53,26 @@ async function checkQueue(): Promise<HealthCheck & { counts?: unknown }> {
   }
 }
 
-export async function GET() {
+let cachedHealthResponse: { data: any; status: number; expiresAt: number } | null = null;
+const HEALTH_CACHE_TTL_MS = 5000; // 5 seconds cache to shield DB from frequent monitoring probes
+
+export async function GET(request: NextRequest) {
+  // Liveness probe: verifies process is alive without touching database
+  if (request.nextUrl.searchParams.get("probe") === "liveness") {
+    return NextResponse.json({
+      status: "ok",
+      probe: "liveness",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const now = Date.now();
+  if (cachedHealthResponse && now < cachedHealthResponse.expiresAt) {
+    return NextResponse.json(cachedHealthResponse.data, {
+      status: cachedHealthResponse.status,
+    });
+  }
+
   const [database, queue, worker] = await Promise.all([
     checkDatabase(),
     checkQueue(),
@@ -66,16 +85,21 @@ export async function GET() {
   ]);
 
   const healthy = database.status === "ok" && queue.status === "ok" && worker.healthy;
-
-  return NextResponse.json(
-    {
-      status: healthy ? "ok" : "degraded",
-      checks: {
-        database,
-        queue,
-        worker,
-      },
+  const status = healthy ? 200 : 503;
+  const data = {
+    status: healthy ? "ok" : "degraded",
+    checks: {
+      database,
+      queue,
+      worker,
     },
-    { status: healthy ? 200 : 503 }
-  );
+  };
+
+  cachedHealthResponse = {
+    data,
+    status,
+    expiresAt: now + HEALTH_CACHE_TTL_MS,
+  };
+
+  return NextResponse.json(data, { status });
 }

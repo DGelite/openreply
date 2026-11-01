@@ -89,7 +89,14 @@ export const authConfig = {
     },
   },
   trustHost: true,
-  secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET || "428df1ea7d9f4f4a3e20e8b1d4ef63df",
+  secret:
+    process.env.NEXTAUTH_SECRET ||
+    process.env.AUTH_SECRET ||
+    (process.env.NODE_ENV === "production"
+      ? (() => {
+          throw new Error("NEXTAUTH_SECRET or AUTH_SECRET environment variable is mandatory in production.");
+        })()
+      : "dev_insecure_auth_secret_for_local_testing_only"),
 } satisfies NextAuthConfig;
 
 export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);

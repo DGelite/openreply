@@ -136,6 +136,7 @@ describe("Meta Graph API v25.0 Compliance & Safety Suite", () => {
 
       // Mock DB responses
       vi.spyOn(prisma.dripEnrollment, "findMany").mockResolvedValueOnce([mockEnrollment as any]);
+      vi.spyOn(prisma.dripEnrollment, "updateMany").mockResolvedValue({ count: 1 } as any);
       
       // Mock conversation state with lastInteractedAt 25 hours ago
       vi.spyOn(prisma.conversationState, "findUnique").mockResolvedValueOnce({

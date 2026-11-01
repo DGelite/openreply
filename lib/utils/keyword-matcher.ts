@@ -36,53 +36,42 @@ const ARABIC_PERSIAN_RANGE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uF
  * Keeps the text meaningfully searchable while removing irrelevant variation.
  */
 export function normalizePersian(text: string): string {
+  if (!text) return "";
   return text
-    // ── YEH variants → Persian YEH ──────────────────────────────────────
-    .replace(/\u064A/g, "\u06CC") // Arabic YEH (ي) → Persian YEH (ی)
-    .replace(/\u0649/g, "\u06CC") // ALEF MAQSURA (ى) → Persian YEH (ی)
-    .replace(/\u0626/g, "\u06CC") // YEH WITH HAMZA (ئ) → YEH (ی)
+    // ── Strip diacritics, tatweel, zero-width joiner, RTL marks, and standalone hamza in one pass
+    .replace(/[\u0621\u0640\u064B-\u065F\u0670\u200D\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
 
-    // ── KAF variants → Persian KAF ──────────────────────────────────────
-    .replace(/\u0643/g, "\u06A9") // Arabic KAF (ك) → Persian KAF (ک)
-
-    // ── ALEF variants → plain ALEF ──────────────────────────────────────
-    .replace(/[\u0622\u0623\u0625]/g, "\u0627") // آ، أ، إ → ا
-    .replace(/\u0671/g, "\u0627") // ALEF WASLA → ALEF
-
-    // ── WAW variants ─────────────────────────────────────────────────────
-    .replace(/\u0624/g, "\u0648") // WAW WITH HAMZA (ؤ) → WAW (و)
-
-    // ── HEH variants ─────────────────────────────────────────────────────
-    .replace(/\u0629/g, "\u0647") // TEH MARBUTA (ة) → HEH (ه)
-    .replace(/\u06C0/g, "\u0647") // HEH WITH YEH ABOVE (ۀ) → HEH (ه)
-
-    // ── HAMZAs ───────────────────────────────────────────────────────────
-    .replace(/\u0621/g, "") // standalone HAMZA — often decorative, strip it
-
-    // ── Diacritics (harakat) — Arabic short vowel marks ──────────────────
-    .replace(/[\u064B-\u065F\u0670]/g, "") // fathah, kasrah, dammah, etc.
-
-    // ── Tatweel/Kashida — stretching glyph used for emphasis ─────────────
-    .replace(/\u0640/g, "") // Arabic TATWEEL (ـ)
-
-    // ── Zero-Width Non-Joiner → space ────────────────────────────────────
-    // Separates compound Persian words (می‌روم → می روم). Critical for
-    // matching keywords like "می‌خوام" when user types "می خوام".
+    // ── Zero-Width Non-Joiner → space (splits compound Persian words) ────
     .replace(/\u200C/g, " ")
 
-    // ── Zero-Width Joiner → removed ──────────────────────────────────────
-    .replace(/\u200D/g, "")
+    // ── YEH variants (Arabic YEH, Alef Maqsura, Yeh with Hamza) → Persian YEH
+    .replace(/[\u064A\u0649\u0626]/g, "\u06CC")
 
-    // ── Right-to-Left marks ───────────────────────────────────────────────
-    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+    // ── KAF variants → Persian KAF ──────────────────────────────────────
+    .replace(/\u0643/g, "\u06A9")
+
+    // ── ALEF variants (آ، أ، إ، Alef Wasla) → plain ALEF ─────────────────
+    .replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627")
+
+    // ── WAW variants (Waw with Hamza) → WAW ──────────────────────────────
+    .replace(/\u0624/g, "\u0648")
+
+    // ── HEH variants (Teh Marbuta, Heh with Yeh above) → HEH ─────────────
+    .replace(/[\u0629\u06C0]/g, "\u0647");
 }
 
+const FULL_WIDTH_REGEX = /[\uFF01-\uFF5E]/g;
+const EMOJI_REGEX = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}]/gu;
+const NON_ALPHANUMERIC_REGEX = /[^\p{L}\p{N}\s]/gu;
+const WHITESPACE_COLLAPSE_REGEX = /\s+/g;
+
 /**
- * Fold full-width ASCII (Ａ-Ｚ, ａ-ｚ, ０-９) to their half-width equivalents.
+ * Fold full-width ASCII (Ａ-Ｚ, ａ-ｚ, ０-۹) to their half-width equivalents.
  * Handles cases where users type keywords in full-width on mobile keyboards.
  */
 function foldFullWidth(text: string): string {
-  return text.replace(/[\uFF01-\uFF5E]/g, (ch) =>
+  if (!text) return "";
+  return text.replace(FULL_WIDTH_REGEX, (ch) =>
     String.fromCharCode(ch.charCodeAt(0) - 0xFF00 + 0x20)
   );
 }
@@ -92,16 +81,12 @@ function foldFullWidth(text: string): string {
  * Returns a clean, searchable string.
  */
 export function stripSpecialCharacters(text: string): string {
+  if (!text) return "";
   const normalized = normalizePersian(foldFullWidth(text));
   return normalized
-    // Emoji blocks
-    .replace(
-      /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}]/gu,
-      ""
-    )
-    // Keep only Unicode letters, digits, whitespace
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
+    .replace(EMOJI_REGEX, "")
+    .replace(NON_ALPHANUMERIC_REGEX, " ")
+    .replace(WHITESPACE_COLLAPSE_REGEX, " ")
     .trim();
 }
 
@@ -111,15 +96,45 @@ export function stripSpecialCharacters(text: string): string {
  * \b (word boundary) is only reliable for ASCII. For Persian/Arabic we use
  * lookahead/lookbehind for whitespace, string start/end, or non-letter chars.
  */
+const rtlRegexCache = new Map<string, RegExp>();
+const latinRegexCache = new Map<string, RegExp>();
+const MAX_REGEX_CACHE_SIZE = 500;
+
+export function clearKeywordRegexCache(): void {
+  rtlRegexCache.clear();
+  latinRegexCache.clear();
+}
+
 function buildRtlWordBoundaryRegex(keyword: string): RegExp {
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Match keyword surrounded by:
-  //   - start/end of string, OR
-  //   - any character that is NOT a Unicode letter or digit
-  return new RegExp(
-    `(?:^|(?<=[^\\p{L}\\p{N}]))${escaped}(?=$|[^\\p{L}\\p{N}])`,
-    "giu"
-  );
+  let regex = rtlRegexCache.get(keyword);
+  if (!regex) {
+    if (rtlRegexCache.size >= MAX_REGEX_CACHE_SIZE) {
+      const first = rtlRegexCache.keys().next().value;
+      if (first) rtlRegexCache.delete(first);
+    }
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    regex = new RegExp(
+      `(?:^|(?<=[^\\p{L}\\p{N}]))${escaped}(?=$|[^\\p{L}\\p{N}])`,
+      "giu"
+    );
+    rtlRegexCache.set(keyword, regex);
+  }
+  regex.lastIndex = 0;
+  return regex;
+}
+
+function buildLatinWordBoundaryRegex(escapedKw: string): RegExp {
+  let regex = latinRegexCache.get(escapedKw);
+  if (!regex) {
+    if (latinRegexCache.size >= MAX_REGEX_CACHE_SIZE) {
+      const first = latinRegexCache.keys().next().value;
+      if (first) latinRegexCache.delete(first);
+    }
+    regex = new RegExp(`(?:^|\\s)${escapedKw}(?:$|\\s)`, "ui");
+    latinRegexCache.set(escapedKw, regex);
+  }
+  regex.lastIndex = 0;
+  return regex;
 }
 
 /**
@@ -203,8 +218,7 @@ export function matchKeywords(
       // ── Latin word boundary check ──────────────────────────────────────
       const escapedKw = cleanedKw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       try {
-        // \b works correctly for ASCII/Latin
-        const latinRegex = new RegExp(`(?:^|\\s)${escapedKw}(?:$|\\s)`, "ui");
+        const latinRegex = buildLatinWordBoundaryRegex(escapedKw);
         if (latinRegex.test(cleaned)) {
           return { matched: true, matchedKeyword: keyword };
         }

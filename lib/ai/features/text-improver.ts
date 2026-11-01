@@ -17,12 +17,26 @@ export interface ImproveTextParams {
   targetLanguage?: string;
 }
 
+const textImproverCache = new Map<string, { result: string; expiresAt: number }>();
+const TEXT_IMPROVER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+export function clearTextImproverCache(): void {
+  textImproverCache.clear();
+}
+
 export async function improveText(
   params: ImproveTextParams
 ): Promise<string> {
   const { workspaceId, text, mode, targetLanguage = "Persian" } = params;
 
   if (!text || text.trim().length === 0) return "";
+
+  const cacheKey = `${workspaceId}:${mode}:${targetLanguage}:${text.trim()}`;
+  const now = Date.now();
+  const cached = textImproverCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) {
+    return cached.result;
+  }
 
   const aiEngine = await getAiEngine(workspaceId);
 
@@ -52,5 +66,8 @@ export async function improveText(
     temperature: 0.5,
   });
 
-  return completion.text.trim();
+  const result = completion.text.trim();
+  textImproverCache.set(cacheKey, { result, expiresAt: now + TEXT_IMPROVER_CACHE_TTL_MS });
+
+  return result;
 }

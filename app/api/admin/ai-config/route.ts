@@ -2,55 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { encryptToken } from "@/lib/meta/oauth";
 import { AiProviderType } from "@/lib/generated/prisma/client";
-import { getCurrentWorkspaceId } from "@/lib/auth";
+import { getCurrentWorkspaceContext, canManageWorkspace } from "@/lib/workspace-access";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-async function resolveWorkspaceId(reqWsId?: string | null): Promise<string> {
-  // 1. Check if explicit workspaceId exists in DB
-  if (reqWsId) {
-    const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-    if (ws) return ws.id;
-  }
-
-  // 2. Try user active session workspace
-  const userWsId = await getCurrentWorkspaceId();
-  if (userWsId) {
-    const ws = await prisma.workspace.findUnique({ where: { id: userWsId } });
-    if (ws) return ws.id;
-  }
-
-  // 3. If an AiConfig record already exists in DB, stick to its workspaceId
-  const existingConfig = await prisma.aiConfig.findFirst({
-    select: { workspaceId: true },
-  });
-  if (existingConfig) {
-    return existingConfig.workspaceId;
-  }
-
-  // 4. Fallback to first workspace in DB
-  const firstWs = await prisma.workspace.findFirst();
-  if (firstWs) return firstWs.id;
-
-  // 5. Create default workspace if table is completely empty
-  const anyUser = await prisma.user.findFirst();
-  const newWs = await prisma.workspace.upsert({
-    where: { id: "main-workspace" },
-    create: {
-      id: "main-workspace",
-      name: "ورک‌اسپیس اصلی",
-      ownerId: anyUser?.id ?? "admin-user-01",
-    },
-    update: {},
-  });
-  return newWs.id;
-}
-
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const workspaceId = await resolveWorkspaceId(searchParams.get("workspaceId"));
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    const workspaceId = context.workspaceId;
 
     const config = await prisma.aiConfig.findUnique({
       where: { workspaceId },
@@ -94,9 +58,21 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!canManageWorkspace(context.role)) {
+      return NextResponse.json(
+        { success: false, error: "فقط مدیران اجازه تغییر تنظیمات هوش مصنوعی را دارند." },
+        { status: 403 }
+      );
+    }
+
+    const workspaceId = context.workspaceId;
     const body = await request.json();
     const {
-      workspaceId,
       isEnabled,
       provider,
       model,
@@ -116,13 +92,12 @@ export async function POST(request: NextRequest) {
       offlineMessage,
     } = body;
 
-    const validWorkspaceId = await resolveWorkspaceId(workspaceId);
     const encryptedKey = apiKey && typeof apiKey === "string" && apiKey.trim() ? encryptToken(apiKey.trim()) : undefined;
 
     const updatedConfig = await prisma.aiConfig.upsert({
-      where: { workspaceId: validWorkspaceId },
+      where: { workspaceId },
       create: {
-        workspaceId: validWorkspaceId,
+        workspaceId,
         isEnabled: isEnabled ?? true,
         provider: (provider as AiProviderType) || "GEMINI",
         model: model || "gemini-2.5-flash",
@@ -175,4 +150,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
-

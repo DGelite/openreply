@@ -32,12 +32,11 @@ function generateSlug(title: string): string {
 export async function GET(request: NextRequest) {
   try {
     const context = await getCurrentWorkspaceContext();
-    let workspaceId = context?.workspaceId;
-
-    if (!workspaceId) {
-      const firstWs = await prisma.workspace.findFirst();
-      workspaceId = firstWs?.id ?? "main-workspace";
+    if (!context?.workspaceId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
+
+    const workspaceId = context.workspaceId;
 
     const forms = await prisma.leadForm.findMany({
       where: { workspaceId },

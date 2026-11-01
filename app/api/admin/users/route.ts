@@ -72,6 +72,15 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const currentUser = await prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { systemRole: true },
+    });
+
+    if (currentUser?.systemRole !== "SUPER_ADMIN" && currentUser?.systemRole !== "ADMIN") {
+      return NextResponse.json({ error: "دسترسی غیرمجاز: فقط مدیران سیستم امکان مشاهده کاربران را دارند." }, { status: 403 });
+    }
+
     const users = await prisma.user.findMany({
       select: {
         id: true,

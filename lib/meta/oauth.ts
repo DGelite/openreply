@@ -149,6 +149,19 @@ export function decryptToken(encryptedBase64: string): string {
   );
 }
 
+interface CachedDecryptedToken {
+  token: string;
+  expiresAt: number;
+}
+
+const tokenDecryptionCache = new Map<string, CachedDecryptedToken>();
+const TOKEN_CACHE_MAX_ENTRIES = 100;
+const TOKEN_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+export function clearTokenDecryptionCache(): void {
+  tokenDecryptionCache.clear();
+}
+
 export function safeDecryptToken(encryptedBase64: string): string {
   if (!encryptedBase64) return "";
   if (
@@ -159,9 +172,30 @@ export function safeDecryptToken(encryptedBase64: string): string {
   ) {
     return encryptedBase64;
   }
-  try {
-    return decryptToken(encryptedBase64);
-  } catch {
-    return encryptedBase64;
+
+  const now = Date.now();
+  const cached = tokenDecryptionCache.get(encryptedBase64);
+  if (cached && now < cached.expiresAt) {
+    return cached.token;
   }
+
+  let decrypted: string;
+  try {
+    decrypted = decryptToken(encryptedBase64);
+  } catch {
+    decrypted = encryptedBase64;
+  }
+
+  // Maintain strict memory bounds
+  if (tokenDecryptionCache.size >= TOKEN_CACHE_MAX_ENTRIES) {
+    const oldestKey = tokenDecryptionCache.keys().next().value;
+    if (oldestKey) tokenDecryptionCache.delete(oldestKey);
+  }
+
+  tokenDecryptionCache.set(encryptedBase64, {
+    token: decrypted,
+    expiresAt: now + TOKEN_CACHE_TTL_MS,
+  });
+
+  return decrypted;
 }

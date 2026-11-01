@@ -22,6 +22,12 @@ function createPrismaClient() {
     dbUrl += (dbUrl.includes('?') ? '&' : '?') + 'allowPublicKeyRetrieval=true';
   }
 
+  // Enforce connection pool limit per process to respect VPS connection budget (e.g. 5 per instance)
+  const connectionLimit = process.env.DB_CONNECTION_LIMIT || '5';
+  if (!dbUrl.includes('connectionLimit=')) {
+    dbUrl += (dbUrl.includes('?') ? '&' : '?') + `connectionLimit=${connectionLimit}`;
+  }
+
   // PrismaMariaDb handles createPool internally when given a string URL or config object
   const adapter = new PrismaMariaDb(dbUrl, { useTextProtocol: true });
   return new PrismaClient({ adapter });

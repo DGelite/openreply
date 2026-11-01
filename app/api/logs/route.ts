@@ -14,10 +14,12 @@ const VALID_STATUSES = [
 
 export async function GET(request: NextRequest) {
   try {
-    let workspaceId = await getCurrentWorkspaceId();
+    const workspaceId = await getCurrentWorkspaceId();
     if (!workspaceId) {
-      const firstWs = await prisma.workspace.findFirst({ select: { id: true } });
-      workspaceId = firstWs?.id ?? "main-workspace";
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
     }
 
     const searchParams = request.nextUrl.searchParams;
@@ -51,19 +53,12 @@ export async function GET(request: NextRequest) {
       ];
     }
 
-    // Try workspace specific filter first
-    let where: any = {
+    const where: any = {
       workspaceId,
       ...baseFilter,
     };
 
-    let total = await prisma.dmLog.count({ where });
-
-    // Fallback: If 0 logs found for this specific workspaceId, fetch all logs across DB
-    if (total === 0 && !instagramAccountId && !statusFilter && !query) {
-      where = { ...baseFilter };
-      total = await prisma.dmLog.count({ where });
-    }
+    const total = await prisma.dmLog.count({ where });
 
     const logs = await prisma.dmLog.findMany({
       where,

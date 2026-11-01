@@ -28,7 +28,9 @@ export async function POST(req: NextRequest) {
     // 1. Bearer Token Check
     if (authHeader) {
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (token && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(secret))) {
+      const tokenBuf = Buffer.from(token);
+      const secretBuf = Buffer.from(secret);
+      if (tokenBuf.length === secretBuf.length && crypto.timingSafeEqual(tokenBuf, secretBuf)) {
         isAuthorized = true;
       }
     }

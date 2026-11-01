@@ -85,7 +85,8 @@ import {
  */
 export async function metaFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   await applyDangerZoneBackoff();
-  return fetch(input, init);
+  const signal = init?.signal ?? AbortSignal.timeout(12_000);
+  return fetch(input, { ...init, signal });
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {

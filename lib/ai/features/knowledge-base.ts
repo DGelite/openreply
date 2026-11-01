@@ -51,6 +51,30 @@ export function chunkText(text: string, chunkSize: number = 300): string[] {
   return chunks;
 }
 
+interface CachedKbDocs {
+  documents: any[];
+  expiresAt: number;
+}
+const kbDocCache = new Map<string, CachedKbDocs>();
+const KB_CACHE_TTL_MS = 120_000; // 2 minutes
+const KB_CACHE_MAX_ENTRIES = 50;
+
+function setCachedKbDocs(workspaceId: string, documents: any[], now: number) {
+  if (kbDocCache.size >= KB_CACHE_MAX_ENTRIES) {
+    const oldest = kbDocCache.keys().next().value;
+    if (oldest) kbDocCache.delete(oldest);
+  }
+  kbDocCache.set(workspaceId, { documents, expiresAt: now + KB_CACHE_TTL_MS });
+}
+
+export function invalidateKnowledgeBaseCache(workspaceId?: string): void {
+  if (workspaceId) {
+    kbDocCache.delete(workspaceId);
+  } else {
+    kbDocCache.clear();
+  }
+}
+
 /**
  * Indexes a document into the Knowledge Base RAG.
  */
@@ -58,6 +82,8 @@ export async function addDocumentToKnowledgeBase(
   params: AddDocumentParams
 ): Promise<string> {
   const { workspaceId, title, sourceType, sourceUrl, content, chunkSize = 300 } = params;
+
+  invalidateKnowledgeBaseCache(workspaceId);
 
   const document = await prisma.knowledgeDocument.create({
     data: {
@@ -107,6 +133,25 @@ export async function queryKnowledgeBase(
   query: string,
   topK: number = 3
 ): Promise<KnowledgeSearchResult[]> {
+  const now = Date.now();
+  let documents: any[];
+
+  const cached = kbDocCache.get(workspaceId);
+  if (cached && now < cached.expiresAt) {
+    documents = cached.documents;
+  } else {
+    documents = await prisma.knowledgeDocument.findMany({
+      where: { workspaceId, isApproved: true },
+      include: { chunks: true },
+    });
+    setCachedKbDocs(workspaceId, documents, now);
+  }
+
+  // If no approved documents exist for this workspace, avoid generating embeddings completely
+  if (!documents || documents.length === 0) {
+    return [];
+  }
+
   const aiEngine = await getAiEngine(workspaceId);
 
   let queryVector: number[] = [];
@@ -118,11 +163,6 @@ export async function queryKnowledgeBase(
       queryVector = [];
     }
   }
-
-  const documents = await prisma.knowledgeDocument.findMany({
-    where: { workspaceId, isApproved: true },
-    include: { chunks: true },
-  });
 
   const results: KnowledgeSearchResult[] = [];
 

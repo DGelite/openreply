@@ -145,7 +145,7 @@ export async function processIncomingDirectMessage(
   }
 
   // ── 0. Update 24-Hour Messaging Window & Resume Paused Drips ────────────
-  await prisma.conversationState.upsert({
+  const conversationState = await prisma.conversationState.upsert({
     where: {
       instagramAccountId_userId: { instagramAccountId, userId },
     },
@@ -170,7 +170,8 @@ export async function processIncomingDirectMessage(
     account.workspaceId,
     instagramAccountId,
     userId,
-    messageText
+    messageText,
+    conversationState
   );
   if (handoverState.isHandover) {
     console.log(
@@ -180,11 +181,6 @@ export async function processIncomingDirectMessage(
   }
 
   // ── 2. Active Flow or Lead Collection State ──────────────────────────────
-  const conversationState = await prisma.conversationState.findUnique({
-    where: {
-      instagramAccountId_userId: { instagramAccountId, userId },
-    },
-  });
 
   // Check lead prompt step
   if (

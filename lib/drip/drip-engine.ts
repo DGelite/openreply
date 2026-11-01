@@ -172,6 +172,23 @@ export async function processDueDripEnrollments(limit = 25) {
   const results: Array<{ enrollmentId: string; status: string; error?: string }> = [];
 
   for (const enrollment of dueEnrollments) {
+    // ── Concurrency Guard: Atomically lease enrollment for 5 minutes ────────
+    const claimRes = await prisma.dripEnrollment.updateMany({
+      where: {
+        id: enrollment.id,
+        status: "ACTIVE",
+        nextRunAt: enrollment.nextRunAt,
+      },
+      data: {
+        nextRunAt: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    });
+
+    if (claimRes.count === 0) {
+      // Another worker or process already claimed this enrollment
+      continue;
+    }
+
     const { campaign } = enrollment;
     const account = campaign.workspace.instagramAccounts.find(
       (a: any) => a.id === enrollment.instagramAccountId
@@ -196,6 +213,13 @@ export async function processDueDripEnrollments(limit = 25) {
     // ── Circuit Breaker check ──────────────────────────────────────────────
     const cooldown = isAccountInCooldown(account.instagramId);
     if (cooldown.inCooldown) {
+      const delayMs = Math.max(30_000, cooldown.remainingMs);
+      await prisma.dripEnrollment.updateMany({
+        where: { id: enrollment.id },
+        data: {
+          nextRunAt: new Date(Date.now() + delayMs),
+        },
+      });
       console.warn(
         `[DripEngine] Account ${account.instagramId} is in cooldown (${Math.round(
           cooldown.remainingMs / 1000

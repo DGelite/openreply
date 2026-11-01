@@ -1,8 +1,7 @@
-import { PrismaClient } from "../lib/generated/prisma/client";
+import { prisma } from "../lib/db/client";
 import { hashPassword } from "../lib/auth/password";
 import { ensureWorkspaceForUser } from "../lib/workspace";
 
-const prisma = new PrismaClient();
 
 async function main() {
   console.log("Seeding default Super Admin user...");

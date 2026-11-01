@@ -258,6 +258,9 @@ model DmLog {
   @@index([automationId])
   @@index([instagramAccountId])
   @@index([status])
+  @@index([instagramAccountId, type, status, dmSentAt])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
 }
 
 model ProcessedComment {
@@ -416,6 +419,7 @@ model BackgroundJob {
   updatedAt DateTime  @updatedAt
 
   @@index([status, runAt])
+  @@index([status, lockedAt])
 }
 
 enum JobStatus {
@@ -468,6 +472,7 @@ model ConversationState {
   @@unique([instagramAccountId, userId])
   @@index([workspaceId])
   @@index([userId])
+  @@index([workspaceId, isHumanHandover])
 }
 
 model Lead {
@@ -588,6 +593,7 @@ model DripEnrollment {
   @@index([workspaceId])
   @@index([status, nextRunAt])
   @@index([userId])
+  @@index([instagramAccountId, userId, status])
 }
 
 model Product {
@@ -913,6 +919,7 @@ model DeadLetterMessage {
   @@index([workspaceId])
   @@index([status])
   @@index([createdAt])
+  @@index([workspaceId, status])
 }
 
 model FunnelEvent {

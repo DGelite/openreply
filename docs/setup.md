@@ -6,79 +6,38 @@ If you would rather have an AI assistant drive most of this, skip to [Set it up 
 
 ## How it is built
 
-OpenReply is two processes and two datastores.
+OpenReply consists of two coordinated services sharing a single primary database:
 
-- Web app and API: Next.js. Serves the dashboard, the OAuth callback, and the incoming webhook. Runs well on Vercel.
-- Worker: a long-running Node process (`npm run worker`) that consumes the send queue and runs the polling reconciler. It cannot run on Vercel, because serverless functions are short-lived and a queue consumer has to stay up. Railway, Render, Fly, or any always-on box works.
-- PostgreSQL: campaigns, logs, accounts, sessions.
-- Redis: the BullMQ send queue and the per-account rate limiter.
+- **Web app and API:** Next.js 16 (App Router). Serves the responsive dashboard, authentication, OAuth callback, and incoming Meta webhooks.
+- **Dedicated Worker:** A high-throughput Node.js process (`worker/dm-worker.ts` or `npm run worker`) that dequeues comment triggers, sends DMs via Meta Graph API v25.0, executes drip follow-ups, and runs the polling reconciliation safety net.
+- **MariaDB 10.11+ / MySQL:** Stores campaigns, encrypted Instagram access tokens, automations, direct message logs, and the transactional queue (`BackgroundJob`). Zero external Redis dependency is required.
 
-The web app and the worker must share the same `DATABASE_URL`, the same `REDIS_URL`, and the same `ENCRYPTION_KEY`. The web app writes an encrypted Instagram token; the worker decrypts it to send. Different keys mean every send fails to decrypt.
+The web app and the worker must share the same `DATABASE_URL` and `ENCRYPTION_KEY`. The web app encrypts Instagram tokens with AES-256; the worker decrypts them at dispatch time.
 
-## What you need first
+## Recommended Hosting: Linux VPS Quick Launch
 
-- A Facebook account. Meta developer registration is built on it. There is no Instagram-only path.
-- An Instagram Business or Creator account. A personal account cannot be connected. Switch it in the Instagram app under Settings, Account type, if needed.
-- A [Resend](https://resend.com) account for login emails, with a verified sender domain. Login is email magic links only, so without this nobody can sign in.
-- Somewhere to host. The recommended setup, used throughout this guide, is Vercel for the web app and Railway for the worker plus Postgres and Redis. Both have free tiers that are enough to run this for a single account.
+For production environments, deploying OpenReply to a Linux VPS (Ubuntu 22.04/24.04 LTS) via Docker is the official, supported method.
 
-## Hosting and your domain
-
-You do not need to buy a domain. Deploying the web app to Vercel gives you a free public URL like `your-app.vercel.app`, and that URL is what everything else points at: `NEXTAUTH_URL`, the Meta OAuth redirect, and the Meta webhook callback all use it. If you want a custom domain later you can add one, but it is optional and you can launch without it.
-
-Recommended split:
-
-- Web app: Vercel. You get `your-app.vercel.app` for free on deploy.
-- Worker, Postgres, Redis: Railway.
-
-Do Railway first, because Vercel needs the database URLs from it.
-
-### Step 1: Railway (Postgres, Redis, worker)
-
-1. Create a Railway account and a New Project.
-2. In the project, click New, then Database, then Add PostgreSQL.
-3. Click New, then Database, then Add Redis.
-4. Add the worker: click New, then GitHub Repo, and select your fork of this repo. Railway detects the Node app.
-5. Open the worker service's Settings and set the Build Command and Start Command:
-   ```
-   Build Command:  npm run db:generate
-   Start Command:  npm run worker
-   ```
-   The worker only needs the generated Prisma client, not `next build`. Do not leave the build as the default `npm run build`: it runs `next build` needlessly, and any build step that reaches the database (like `prisma migrate deploy`) fails here, because the worker cannot connect to Postgres at build time. Migrations are applied by the web app's `vercel-build` (Step 3) and by the manual `db:migrate` below, never by the worker.
-6. Open the worker service's Variables and add all the environment variables from the [table below](#environment-variables). For the worker, use Railway's internal database and Redis hostnames (they look like `postgres.railway.internal` and `redis.railway.internal`); inside Railway's network they are faster and free of egress. `NEXTAUTH_URL` is your Vercel domain. `ENCRYPTION_KEY` must be the exact same value you will use on Vercel.
-
-Getting the connection URLs. Open the Postgres service, then its Variables or Connect tab. You will see two URLs:
-
-| Variable | Host | Use it for |
-| --- | --- | --- |
-| `DATABASE_URL` | `postgres.railway.internal` | the Railway worker only |
-| `DATABASE_PUBLIC_URL` | `*.proxy.rlwy.net` | Vercel, and running migrations from your machine |
-
-Redis is the same: `REDIS_URL` (internal) for the worker, `REDIS_PUBLIC_URL` (public proxy) for Vercel.
-
-Vercel runs outside Railway's private network, so if you give Vercel an internal `*.railway.internal` URL it will hang and time out. Always give Vercel the public URLs.
-
-### Step 2: Migrate the production database
-
-Run once from your machine, using the public Postgres URL:
+Detailed step-by-step VPS instructions are available in [docs/vps-quick-launch.md](vps-quick-launch.md).
 
 ```bash
-DATABASE_URL="postgresql://...proxy.rlwy.net.../railway" npm run db:migrate
+# 1. Clone repository on your VPS
+git clone https://github.com/diwenne/openreply.git
+cd openreply
+
+# 2. Configure environment
+cp .env.example .env
+nano .env
+
+# 3. Pre-flight check & launch
+./deploy/quick-launch.sh --check
+./deploy/quick-launch.sh --up
 ```
 
-### Step 3: Vercel (web app, and your domain)
-
-1. Create a Vercel account and Add New Project, importing your fork. It auto-detects Next.js.
-2. Under the project's Settings, then Environment Variables, add every variable from the [table below](#environment-variables). Use these values:
-   - `NEXTAUTH_URL`: your Vercel domain, for example `https://your-app.vercel.app`. This is the free domain Vercel assigns on deploy.
-   - `DATABASE_URL` and `REDIS_URL`: the public Railway URLs (`DATABASE_PUBLIC_URL` and `REDIS_PUBLIC_URL` from Railway).
-   - `ENCRYPTION_KEY`: the exact same value as on the worker.
-3. Deploy. The build runs `prisma generate` before `next build`, so the Prisma client is generated even though it is gitignored.
-4. The daily token-refresh cron is wired up in `vercel.json`.
-
-Note on crons: Vercel's free plan allows each cron to run at most once per day. The repo's crons are set to daily for that reason. The comment polling reconciler does not use a Vercel cron; it runs inside the Railway worker on its own interval, so the free plan is not a constraint there.
-
-Optional custom domain: if you want `openreply.yoursite.com` instead of the Vercel URL, add it in Vercel under Domains and make it primary. Then update `NEXTAUTH_URL` and the two Meta URLs (Step 7 and Step 8 below) to the new domain, and update the worker's `NEXTAUTH_URL` too, or tracked links in DMs will point at the old domain.
+If you prefer running via PM2 without Docker, an automated configuration is provided in `ecosystem.config.cjs`:
+```bash
+pm2 start ecosystem.config.cjs
+```
 
 ## Environment variables
 
@@ -86,12 +45,12 @@ Copy `.env.example` to `.env` for local work, or set these in Vercel and Railway
 
 | Variable | What it is |
 | --- | --- |
-| `NEXTAUTH_URL` | Your public URL. Your Vercel domain in production, your tunnel URL locally. |
-| `NEXTAUTH_SECRET` | Random secret. `openssl rand -base64 32` |
-| `CRON_SECRET` | Random secret protecting the token-refresh cron. |
-| `ENCRYPTION_KEY` | 32-byte hex. `openssl rand -hex 32`. Encrypts Instagram tokens. Identical across web and worker. |
-| `DATABASE_URL` | PostgreSQL connection string. Public Railway URL on Vercel; internal on the worker. |
-| `REDIS_URL` | Redis connection string. Must support blocking commands, so an HTTP-only Redis will not work with BullMQ. |
+| `NEXTAUTH_URL` | Your public domain (e.g. `https://insta.yourdomain.com`). |
+| `NEXTAUTH_SECRET` | Random secret. `openssl rand -hex 32` |
+| `AUTH_SECRET` | Match `NEXTAUTH_SECRET`. |
+| `CRON_SECRET` | Random secret protecting the `/api/cron/*` endpoints. |
+| `ENCRYPTION_KEY` | 64-character hexadecimal key (`openssl rand -hex 32`). Encrypts Instagram tokens via AES-256. |
+| `DATABASE_URL` | MariaDB / MySQL connection string (`mysql://user:pass@host:3306/db_name`). |
 | `RESEND_API_KEY` | Resend key. Login is email magic links only, so without this nobody can sign in. |
 | `EMAIL_FROM` | A sender on a domain you verified in Resend. The placeholder will not deliver. |
 | `META_GRAPH_API_VERSION` | Graph API version, for example `v25.0`. |

@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
+import { getCurrentWorkspaceContext, canManageWorkspace } from "@/lib/workspace-access";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = await params;
-    const automation = await prisma.automation.findUnique({
-      where: { id },
+    const automation = await prisma.automation.findFirst({
+      where: { id, workspaceId: context.workspaceId },
     });
 
     if (!automation) {
@@ -27,12 +33,21 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!canManageWorkspace(context.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { name, isActive, graph } = body;
 
-    const automation = await prisma.automation.findUnique({
-      where: { id },
+    const automation = await prisma.automation.findFirst({
+      where: { id, workspaceId: context.workspaceId },
     });
 
     if (!automation) {
@@ -90,7 +105,24 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!canManageWorkspace(context.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const { id } = await params;
+    const automation = await prisma.automation.findFirst({
+      where: { id, workspaceId: context.workspaceId },
+    });
+
+    if (!automation) {
+      return NextResponse.json({ error: "Flow not found" }, { status: 404 });
+    }
+
     await prisma.automation.delete({
       where: { id },
     });

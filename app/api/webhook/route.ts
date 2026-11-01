@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
-import { enqueueJob, POSTBACK_JOB_NAME } from "@/lib/queue/mysql-queue";
+import { enqueueJob, enqueueJobsBatch, POSTBACK_JOB_NAME } from "@/lib/queue/mysql-queue";
 import {
   parseCommentEvents,
   parseDirectMessageEvents,
@@ -65,19 +65,74 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ── Return 200 IMMEDIATELY then enqueue all work asynchronously ──────────
+  // ── Durably enqueue all work with 3.5s timeout guard ─────────────────────
   // Meta Graph API v25.0 requires a 200 response within 5 seconds.
-  // Any synchronous processing here risks webhook retry storms.
-  // All comment/DM/postback processing is handed off to the background worker.
-
-  // Fire-and-forget: enqueue everything, don't await results before returning
-  setImmediate(() => {
-    enqueueAllWebhookWork(payload, rawBody.length).catch((err) => {
-      console.error("[Webhook] Background enqueue failed:", err instanceof Error ? err.message : err);
-    });
-  });
+  // We await fast queue persistence (~20ms) to guarantee durability before acknowledging Meta.
+  // A 3.5s timeout guard guarantees we never breach Meta's 5s retry window.
+  try {
+    await Promise.race([
+      enqueueAllWebhookWork(payload, rawBody.length),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Webhook enqueue timeout (3.5s)")), 3500)
+      ),
+    ]);
+  } catch (enqueueErr) {
+    console.error(
+      "[Webhook] Enqueue error or timeout:",
+      enqueueErr instanceof Error ? enqueueErr.message : enqueueErr
+    );
+    // If database was down, returning 500 triggers Meta retry policy
+    // If it was just a timeout, we still return 200 to prevent retry storm
+    if (enqueueErr instanceof Error && !enqueueErr.message.includes("timeout")) {
+      return NextResponse.json(
+        { success: false, error: "Database unavailable" },
+        { status: 500 }
+      );
+    }
+  }
 
   return NextResponse.json({ success: true }, { status: 200 });
+}
+
+const accountWorkspaceCache = new Map<string, { workspaceId: string; expiresAt: number }>();
+const ACC_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_ACC_CACHE_SIZE = 200;
+
+function linkWebhookToWorkspace(webhookEventId: string, instagramAccountId: string) {
+  const now = Date.now();
+  const cached = accountWorkspaceCache.get(instagramAccountId);
+  if (cached && now < cached.expiresAt) {
+    prisma.webhookEvent
+      .update({
+        where: { id: webhookEventId },
+        data: { workspaceId: cached.workspaceId },
+      })
+      .catch(() => {});
+    return;
+  }
+
+  prisma.instagramAccount
+    .findUnique({
+      where: { instagramId: instagramAccountId },
+      select: { workspaceId: true },
+    })
+    .then((account) => {
+      if (account) {
+        if (accountWorkspaceCache.size >= MAX_ACC_CACHE_SIZE) {
+          const oldest = accountWorkspaceCache.keys().next().value;
+          if (oldest) accountWorkspaceCache.delete(oldest);
+        }
+        accountWorkspaceCache.set(instagramAccountId, {
+          workspaceId: account.workspaceId,
+          expiresAt: now + ACC_CACHE_TTL_MS,
+        });
+        return prisma.webhookEvent.update({
+          where: { id: webhookEventId },
+          data: { workspaceId: account.workspaceId },
+        });
+      }
+    })
+    .catch(() => {});
 }
 
 /**
@@ -111,6 +166,7 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
       payload as Parameters<typeof parseCommentEvents>[0]
     );
 
+    const commentJobs: Array<{ name: string; payload: any }> = [];
     for (const event of commentEvents) {
       try {
         await prisma.processedComment.create({
@@ -120,38 +176,32 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
             source: "WEBHOOK",
           },
         });
+        commentJobs.push({
+          name: "process-comment",
+          payload: {
+            instagramAccountId: event.instagramAccountId,
+            commentId: event.commentId,
+            commentText: event.commentText,
+            commenterId: event.commenterId,
+            commenterName: event.commenterName,
+            mediaId: event.mediaId,
+            source: "WEBHOOK" as const,
+          },
+        });
       } catch {
         console.warn(`[Webhook] Duplicate comment ${event.commentId} detected. Skipping.`);
         continue;
       }
+    }
 
-      await enqueueJob("process-comment", {
-        instagramAccountId: event.instagramAccountId,
-        commentId: event.commentId,
-        commentText: event.commentText,
-        commenterId: event.commenterId,
-        commenterName: event.commenterName,
-        mediaId: event.mediaId,
-        source: "WEBHOOK" as const,
-      });
+    if (commentJobs.length > 0) {
+      await enqueueJobsBatch(commentJobs);
+    }
 
-      // Asynchronously link webhook event to workspace (non-blocking)
-      if (webhookEventId) {
-        prisma.instagramAccount
-          .findUnique({
-            where: { instagramId: event.instagramAccountId },
-            select: { workspaceId: true },
-          })
-          .then((account) => {
-            if (account && webhookEventId) {
-              return prisma.webhookEvent.update({
-                where: { id: webhookEventId },
-                data: { workspaceId: account.workspaceId },
-              });
-            }
-          })
-          .catch(() => {});
-      }
+    // Link webhook event to workspace once per payload using cached account lookup
+    const primaryAccountId = commentEvents[0]?.instagramAccountId;
+    if (webhookEventId && primaryAccountId) {
+      linkWebhookToWorkspace(webhookEventId, primaryAccountId);
     }
 
     // ── 2. Postback events (button taps → reveal DM) ───────────────────────
@@ -159,6 +209,7 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
       payload as Parameters<typeof parsePostbackEvents>[0]
     );
 
+    const postbackJobs: Array<{ name: string; payload: any }> = [];
     for (const event of postbackEvents) {
       if (event.mid) {
         try {
@@ -175,12 +226,19 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
         }
       }
 
-      await enqueueJob(POSTBACK_JOB_NAME, {
-        instagramAccountId: event.instagramAccountId,
-        userId: event.userId,
-        payload: event.payload,
-        mid: event.mid,
+      postbackJobs.push({
+        name: POSTBACK_JOB_NAME,
+        payload: {
+          instagramAccountId: event.instagramAccountId,
+          userId: event.userId,
+          payload: event.payload,
+          mid: event.mid,
+        },
       });
+    }
+
+    if (postbackJobs.length > 0) {
+      await enqueueJobsBatch(postbackJobs);
     }
 
     // ── 3. Direct Messages, Story Replies & Story Mentions ─────────────────
@@ -188,6 +246,7 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
       payload as Parameters<typeof parseDirectMessageEvents>[0]
     );
 
+    const dmJobs: Array<{ name: string; payload: any }> = [];
     for (const event of dmEvents) {
       if (event.mid) {
         try {
@@ -204,17 +263,24 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
         }
       }
 
-      await enqueueJob("process-dm", {
-        instagramAccountId: event.instagramAccountId,
-        userId: event.userId,
-        username: event.username,
-        messageText: event.messageText,
-        mid: event.mid,
-        isStoryReply: event.isStoryReply,
-        isStoryMention: event.isStoryMention,
-        storyMediaId: event.storyMediaId,
-        quickReplyPayload: event.quickReplyPayload,
+      dmJobs.push({
+        name: "process-dm",
+        payload: {
+          instagramAccountId: event.instagramAccountId,
+          userId: event.userId,
+          username: event.username,
+          messageText: event.messageText,
+          mid: event.mid,
+          isStoryReply: event.isStoryReply,
+          isStoryMention: event.isStoryMention,
+          storyMediaId: event.storyMediaId,
+          quickReplyPayload: event.quickReplyPayload,
+        },
       });
+    }
+
+    if (dmJobs.length > 0) {
+      await enqueueJobsBatch(dmJobs);
     }
 
     // ── 4. Story Reactions (e.g. Heart / Emoji reaction to Stories) ─────────
@@ -222,6 +288,7 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
       payload as Parameters<typeof parseReactionEvents>[0]
     );
 
+    const reactionJobs: Array<{ name: string; payload: any }> = [];
     for (const event of reactionEvents) {
       if (event.mid) {
         try {
@@ -237,13 +304,20 @@ async function enqueueAllWebhookWork(payload: unknown, bodyLength: number): Prom
         }
       }
 
-      await enqueueJob("process-reaction", {
-        instagramAccountId: event.instagramAccountId,
-        userId: event.userId,
-        messageText: event.reaction,
-        mid: event.mid,
-        isStoryReaction: true,
+      reactionJobs.push({
+        name: "process-reaction",
+        payload: {
+          instagramAccountId: event.instagramAccountId,
+          userId: event.userId,
+          messageText: event.reaction,
+          mid: event.mid,
+          isStoryReaction: true,
+        },
       });
+    }
+
+    if (reactionJobs.length > 0) {
+      await enqueueJobsBatch(reactionJobs);
     }
 
     // ── Mark webhook event processed ───────────────────────────────────────

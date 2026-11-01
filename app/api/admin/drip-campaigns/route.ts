@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
+import { getCurrentWorkspaceContext, canManageWorkspace } from "@/lib/workspace-access";
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const workspaceId = searchParams.get("workspaceId");
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
 
     const campaigns = await prisma.dripCampaign.findMany({
-      where: workspaceId ? { workspaceId } : undefined,
+      where: { workspaceId: context.workspaceId },
       include: {
         steps: {
           orderBy: { stepOrder: "asc" },
@@ -25,20 +28,29 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { workspaceId, name, triggerType, triggerKey, steps } = body;
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
 
-    if (!workspaceId || !name) {
+    if (!canManageWorkspace(context.role)) {
+      return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const { name, triggerType, triggerKey, steps } = body;
+
+    if (!name?.trim()) {
       return NextResponse.json(
-        { success: false, error: "workspaceId and name are required" },
+        { success: false, error: "نام کمپین الزامی است." },
         { status: 400 }
       );
     }
 
     const campaign = await prisma.dripCampaign.create({
       data: {
-        workspaceId,
-        name,
+        workspaceId: context.workspaceId,
+        name: name.trim(),
         triggerType: triggerType || "TAG_ADDED",
         triggerKey: triggerKey || null,
         steps: {

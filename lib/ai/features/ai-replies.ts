@@ -84,22 +84,26 @@ export async function generateAiReply(
   const effectiveBrandVoice = brandVoice || config?.brandVoice || "صمیمی، محترمانه و حرفه‌ای";
   const effectiveTone = tone || config?.defaultTone || "friendly";
 
+  const promptParts = [
+    "شما دستیار هوشمند و حرفه‌ای اینستاگرام هستید.",
+    `لحن پاسخ: ${effectiveTone}.`,
+    `لحن برند: ${effectiveBrandVoice}.`,
+    lengthGuide,
+  ];
+  if (memoryContext) {
+    promptParts.push(`اطلاعات قبلی مخاطب:\n${memoryContext}`);
+  }
+  promptParts.push("پاسخ را کاملاً طبیعی، بدون لحن رباتیک و متناسب با نیاز کاربر ارسال کن.");
+
   const systemPrompt = config?.systemPrompt?.trim()
     ? config.systemPrompt
-    : `شما دستیار هوشمند و حرفه‌ای اینستاگرام هستید.
-لحن پاسخ شما: ${effectiveTone}.
-لحن برند کسب‌وکار: ${effectiveBrandVoice}.
-${lengthGuide}
-
-اطلاعات قبلی مخاطب:
-${memoryContext || "هیچ دیتای قبلی موجود نیست."}
-
-پاسخ را کاملاً طبیعی، بدون لحن رباتیک و متناسب با نیاز کاربر ارسال کن.`;
+    : promptParts.join("\n");
 
   const completion = await aiEngine.generateCompletion({
     systemPrompt,
     messages: [{ role: "user", content: userMessage }],
     temperature: config?.temperature ?? 0.7,
+    maxTokens: config?.maxTokens ?? 250,
   });
 
   const cleanText = sanitizeAiOutput(completion.text);

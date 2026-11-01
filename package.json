@@ -8,11 +8,15 @@
     "vercel-build": "prisma generate && prisma migrate deploy && next build --webpack",
     "start": "next start",
     "lint": "eslint",
+    "check": "node scripts/quick-check.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
+    "db:baseline": "tsx scripts/db-baseline.ts",
+    "db:audit": "tsx scripts/db-audit.ts",
     "db:push": "prisma db push",
     "db:seed": "npx tsx prisma/seed.ts",
     "typecheck": "tsc --noEmit",
+    "worker": "tsx worker/dm-worker.ts",
     "test": "vitest run"
   },
   "dependencies": {

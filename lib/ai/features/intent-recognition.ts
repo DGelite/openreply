@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { getAiEngine } from "../factory";
+import { normalizePersian } from "@/lib/utils/keyword-matcher";
 
 export type IntentCategory =
   | "PRICING"
@@ -21,6 +22,58 @@ export interface IntentClassificationResult {
   reasoning?: string;
 }
 
+const intentCache = new Map<string, { result: IntentClassificationResult; expiresAt: number }>();
+const INTENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_INTENT_CACHE_SIZE = 200;
+
+export function clearIntentCache(): void {
+  intentCache.clear();
+}
+
+/**
+ * Fast deterministic heuristics before making an LLM API call.
+ * Saves 100% tokens and latency on standard obvious messages.
+ */
+function checkDeterministicIntent(cleanText: string): IntentClassificationResult | null {
+  const normalized = normalizePersian(cleanText).toLowerCase().trim();
+  const t = normalized.replace(/\s+/g, " ");
+
+  // 1. Simple Greetings
+  const greetingWords = ["سلام", "درود", "صبح بخیر", "عصر بخیر", "شب بخیر", "وقت بخیر", "خسته نباشید", "hi", "hello", "hey"];
+  if (greetingWords.includes(t) || (t.startsWith("سلام") && t.length <= 15)) {
+    return {
+      primaryIntent: "GREETING",
+      confidenceScore: 1.0,
+      secondaryIntents: [],
+      reasoning: "Rule engine: Exact greeting match",
+    };
+  }
+
+  // 2. Direct Pricing Inquiries
+  const pricingWords = ["قیمت", "چنده", "هزینه", "تعرفه", "چقدر میشه", "قیمتش چنده", "قیمت چنده", "price", "cost"];
+  if (pricingWords.some((w) => t === w || (t.includes(w) && t.length <= 25))) {
+    return {
+      primaryIntent: "PRICING",
+      confidenceScore: 0.95,
+      secondaryIntents: ["SALES"],
+      reasoning: "Rule engine: Direct pricing keyword match",
+    };
+  }
+
+  // 3. Direct Appointment Inquiries
+  const appointmentWords = ["رزرو", "نوبت", "رزرو نوبت", "وقت مشاوره", "appointment", "booking"];
+  if (appointmentWords.some((w) => t === w || (t.includes(w) && t.length <= 25))) {
+    return {
+      primaryIntent: "APPOINTMENT",
+      confidenceScore: 0.95,
+      secondaryIntents: ["SALES"],
+      reasoning: "Rule engine: Direct booking keyword match",
+    };
+  }
+
+  return null;
+}
+
 export async function classifyIntent(
   workspaceId: string,
   userMessage: string
@@ -31,6 +84,26 @@ export async function classifyIntent(
       confidenceScore: 1.0,
       secondaryIntents: [],
     };
+  }
+
+  const cleanMessage = userMessage.trim();
+
+  // 1. Rule engine fast-path
+  const ruleMatch = checkDeterministicIntent(cleanMessage);
+  if (ruleMatch) {
+    return ruleMatch;
+  }
+
+  // 2. In-memory cache check
+  const normalizedKey = normalizePersian(cleanMessage).toLowerCase().trim();
+  const cacheKey = `${workspaceId}:${normalizedKey}`;
+  const now = Date.now();
+  const cached = intentCache.get(cacheKey);
+  if (cached) {
+    if (now < cached.expiresAt) {
+      return cached.result;
+    }
+    intentCache.delete(cacheKey);
   }
 
   const aiEngine = await getAiEngine(workspaceId);
@@ -81,7 +154,15 @@ export async function classifyIntent(
     // Fallback
   }
 
-  await prisma.aiAuditLog.create({
+  // Cache result for repeated identical questions
+  if (intentCache.size >= MAX_INTENT_CACHE_SIZE) {
+    const oldest = intentCache.keys().next().value;
+    if (oldest) intentCache.delete(oldest);
+  }
+  intentCache.set(cacheKey, { result, expiresAt: now + INTENT_CACHE_TTL_MS });
+
+  // Fire-and-forget audit log (never block the response)
+  prisma.aiAuditLog.create({
     data: {
       workspaceId,
       feature: "INTENT",
@@ -93,7 +174,7 @@ export async function classifyIntent(
       confidenceScore: result.confidenceScore,
       intentDetected: result.primaryIntent,
     },
-  });
+  }).catch(() => {});
 
   return result;
 }

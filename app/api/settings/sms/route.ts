@@ -19,7 +19,8 @@ export async function GET() {
       success: true,
       data: {
         mode,
-        apiKey,
+        apiKey: apiKey ? "••••••••" : "",
+        isConfigured: Boolean(apiKey),
         lineNumber,
         templateId,
       },
@@ -38,7 +39,11 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { mode, apiKey, lineNumber, templateId, testReceptor } = body;
+    let { mode, apiKey, lineNumber, templateId, testReceptor } = body;
+
+    if (!apiKey || apiKey.includes("••••")) {
+      apiKey = process.env.SMS_IR_API_KEY || "";
+    }
 
     // Optional: Test send if testReceptor provided
     if (testReceptor) {
@@ -64,7 +69,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: "تنظیمات درگاه پیامک با موفقیت بروزرسانی شد.",
+      message: "تنظیمات درگاه پیامک با موفقیت بررسی شد.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "خطا در بررسی تنظیمات پیامک";

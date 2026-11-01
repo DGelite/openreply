@@ -28,6 +28,7 @@ vi.mock("@/lib/db/client", () => {
       upsert: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     instagramAccount: {
       findFirst: vi.fn(),

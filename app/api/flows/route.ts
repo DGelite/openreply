@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
-import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
+import { getCurrentWorkspaceContext, canManageWorkspace } from "@/lib/workspace-access";
 
 export async function GET() {
   try {
-    const workspaceId = await getCurrentWorkspaceId();
-    if (!workspaceId) {
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const automations = await prisma.automation.findMany({
-      where: { workspaceId },
+      where: { workspaceId: context.workspaceId },
       orderBy: { updatedAt: "desc" },
       select: {
         id: true,
@@ -33,12 +33,16 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    let workspaceId = await getCurrentWorkspaceId();
-    if (!workspaceId) {
-      const firstWs = await prisma.workspace.findFirst();
-      workspaceId = firstWs?.id ?? "main-workspace";
+    const context = await getCurrentWorkspaceContext();
+    if (!context?.workspaceId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    if (!canManageWorkspace(context.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const workspaceId = context.workspaceId;
     const body = await request.json();
     const { name, graph } = body;
 
@@ -48,19 +52,14 @@ export async function POST(request: Request) {
     });
 
     if (!account) {
-      const anyAccount = await prisma.instagramAccount.findFirst({ select: { id: true } });
-      if (anyAccount) {
-        account = anyAccount;
-      } else {
-        account = await prisma.instagramAccount.create({
-          data: {
-            workspaceId,
-            instagramId: `sys-ig-${Date.now()}`,
-            username: "system_account",
-            accessToken: "system_token",
-          },
-        });
-      }
+      account = await prisma.instagramAccount.create({
+        data: {
+          workspaceId,
+          instagramId: `sys-ig-${workspaceId}-${Date.now()}`,
+          username: "system_account",
+          accessToken: "system_token",
+        },
+      });
     }
 
     const triggerNode = graph?.nodes?.find((n: any) => n.type === "trigger");
