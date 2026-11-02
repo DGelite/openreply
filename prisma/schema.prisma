@@ -820,6 +820,20 @@ model AiConfig {
   timeoutMs           Int            @default(15000)
   safetySettings      Json           @default("{}")
 
+  // Multi-Provider Credentials & Configuration
+  geminiApiKeyEncrypted   String?        @db.Text
+  geminiModel             String?        @default("gemini-2.5-flash")
+  openAiApiKeyEncrypted   String?        @db.Text
+  openAiModel             String?        @default("gpt-4o-mini")
+  boxApiAiEnabled         Boolean        @default(false)
+  boxApiAiKeyEncrypted    String?        @db.Text
+  boxApiAiModel           String?        @default("gpt-4o-mini")
+  boxApiAiBaseUrl         String?        @default("https://boxapi.ir/api/v1")
+  embeddingProvider       String         @default("GEMINI")
+  embeddingModel          String         @default("text-embedding-004")
+  allowAiFallback         Boolean        @default(false)
+  lastTestStatus          Json           @default("{}")
+
   // Business-Specific Persona & Operating Parameters
   assistantName            String?        @default("دستیار هوشمند")
   roleTitle                String?        @default("مشاور فروش و پشتیبانی")

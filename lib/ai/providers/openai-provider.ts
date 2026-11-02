@@ -79,4 +79,33 @@ export class OpenAIProvider implements AiProvider {
       finishReason: choice?.finish_reason ?? "stop",
     };
   }
+
+  async generateEmbeddings(
+    text: string | string[],
+    model: string = "text-embedding-3-small"
+  ): Promise<number[][]> {
+    const inputs = Array.isArray(text) ? text : [text];
+    const endpoint = `${this.baseUrl}/embeddings`;
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        input: inputs,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`${this.name} Embedding Error ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.data.map((item: { embedding: number[] }) => item.embedding);
+  }
 }

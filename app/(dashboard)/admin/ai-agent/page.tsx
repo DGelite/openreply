@@ -177,8 +177,9 @@ export default function AiAgentAdminPage() {
                 onChange={(e) => setConfig((prev) => (prev ? { ...prev, provider: e.target.value } : null))}
                 className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
               >
-                <option value="GEMINI">Google Gemini</option>
-                <option value="OPENAI">OpenAI (ChatGPT)</option>
+                <option value="GEMINI">Google Gemini (اتصال مستقیم رسمی)</option>
+                <option value="OPENAI">OpenAI (اتصال مستقیم رسمی)</option>
+                <option value="BOXAPI">BoxAPI AI (پروکسی هوش مصنوعی اختیاری)</option>
                 <option value="DEEPSEEK">DeepSeek AI</option>
                 <option value="GROK">xAI Grok</option>
                 <option value="ANTHROPIC">Anthropic Claude</option>

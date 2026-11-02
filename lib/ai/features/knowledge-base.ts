@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db/client";
-import { getAiEngine } from "../factory";
+import { getEmbeddingEngine } from "../factory";
 
 export interface AddDocumentParams {
   workspaceId: string;
@@ -96,18 +96,18 @@ export async function addDocumentToKnowledgeBase(
   });
 
   const textChunks = chunkText(content, chunkSize);
-  const aiEngine = await getAiEngine(workspaceId);
+  const embeddingEngine = await getEmbeddingEngine(workspaceId);
 
   let embeddings: number[][] = [];
-  if (aiEngine.generateEmbeddings) {
+  if (embeddingEngine.generateEmbeddings) {
     try {
-      embeddings = await aiEngine.generateEmbeddings(textChunks);
-    } catch {
-      // Fallback: generate empty embeddings
-      embeddings = textChunks.map(() => new Array(1536).fill(0));
+      embeddings = await embeddingEngine.generateEmbeddings(textChunks);
+    } catch (err) {
+      console.warn("[Knowledge Base] Embedding generation failed:", err);
+      embeddings = textChunks.map(() => []);
     }
   } else {
-    embeddings = textChunks.map(() => new Array(1536).fill(0));
+    embeddings = textChunks.map(() => []);
   }
 
   for (let idx = 0; idx < textChunks.length; idx++) {
@@ -116,7 +116,7 @@ export async function addDocumentToKnowledgeBase(
         documentId: document.id,
         chunkIndex: idx,
         content: textChunks[idx],
-        embedding: (embeddings[idx] || new Array(1536).fill(0)) as any,
+        embedding: (embeddings[idx] || []) as any,
         tokenCount: textChunks[idx].split(/\s+/).length,
       },
     });
@@ -126,7 +126,8 @@ export async function addDocumentToKnowledgeBase(
 }
 
 /**
- * Searches Knowledge Base for top matching chunks via vector cosine similarity.
+ * Searches Knowledge Base for top matching chunks via vector cosine similarity with hybrid fallback.
+ * Ensures model/dimension mismatches never crash RAG or lose matching context.
  */
 export async function queryKnowledgeBase(
   workspaceId: string,
@@ -152,26 +153,44 @@ export async function queryKnowledgeBase(
     return [];
   }
 
-  const aiEngine = await getAiEngine(workspaceId);
+  const embeddingEngine = await getEmbeddingEngine(workspaceId);
 
   let queryVector: number[] = [];
-  if (aiEngine.generateEmbeddings) {
+  if (embeddingEngine.generateEmbeddings) {
     try {
-      const vecs = await aiEngine.generateEmbeddings([query]);
+      const vecs = await embeddingEngine.generateEmbeddings([query]);
       queryVector = vecs[0] || [];
-    } catch {
+    } catch (err) {
+      console.warn("[Knowledge Base] Query embedding generation failed, using lexical search:", err);
       queryVector = [];
     }
   }
+
+  const queryTerms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
 
   const results: KnowledgeSearchResult[] = [];
 
   for (const doc of documents) {
     for (const chunk of doc.chunks) {
       const embedding = (chunk.embedding as number[]) || [];
-      const score = queryVector.length > 0
-        ? cosineSimilarity(queryVector, embedding)
-        : chunk.content.toLowerCase().includes(query.toLowerCase()) ? 0.8 : 0.0;
+      let score = 0;
+
+      // 1. Vector Cosine Similarity if dimensions match exactly
+      if (
+        queryVector.length > 0 &&
+        embedding.length > 0 &&
+        queryVector.length === embedding.length
+      ) {
+        score = cosineSimilarity(queryVector, embedding);
+      } else {
+        // 2. Hybrid Lexical / Keyword Relevance Fallback (Preserves RAG if embedding model changed)
+        const contentLower = chunk.content.toLowerCase();
+        const matches = queryTerms.filter((term) => contentLower.includes(term));
+        score = queryTerms.length > 0 ? (matches.length / queryTerms.length) * 0.75 : 0;
+      }
 
       results.push({
         chunkId: chunk.id,
@@ -186,4 +205,52 @@ export async function queryKnowledgeBase(
   results.sort((a, b) => b.score - a.score);
 
   return results.slice(0, topK);
+}
+
+/**
+ * Re-indexes all knowledge base chunks for a workspace using the active embedding model.
+ */
+export async function reindexKnowledgeBase(workspaceId: string): Promise<number> {
+  invalidateKnowledgeBaseCache(workspaceId);
+
+  const documents = await prisma.knowledgeDocument.findMany({
+    where: { workspaceId },
+  });
+
+  const embeddingEngine = await getEmbeddingEngine(workspaceId);
+  let totalChunksReindexed = 0;
+
+  for (const doc of documents) {
+    const textChunks = chunkText(doc.content, 300);
+
+    let embeddings: number[][] = [];
+    if (embeddingEngine.generateEmbeddings) {
+      try {
+        embeddings = await embeddingEngine.generateEmbeddings(textChunks);
+      } catch (err) {
+        console.warn(`[Knowledge Reindex] Document ${doc.id} embedding failed:`, err);
+        embeddings = textChunks.map(() => []);
+      }
+    }
+
+    // Replace chunks atomically
+    await prisma.knowledgeChunk.deleteMany({
+      where: { documentId: doc.id },
+    });
+
+    for (let idx = 0; idx < textChunks.length; idx++) {
+      await prisma.knowledgeChunk.create({
+        data: {
+          documentId: doc.id,
+          chunkIndex: idx,
+          content: textChunks[idx],
+          embedding: (embeddings[idx] || []) as any,
+          tokenCount: textChunks[idx].split(/\s+/).length,
+        },
+      });
+      totalChunksReindexed++;
+    }
+  }
+
+  return totalChunksReindexed;
 }

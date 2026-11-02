@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { AccountOption } from "@/components/account-select";
 import { useLanguage } from "@/context/language-context";
 import { ProviderSettingsCard } from "@/components/settings/provider-settings-card";
+import { AiProviderCard } from "@/components/settings/ai-provider-card";
 import { AiPersonaCard } from "@/components/settings/ai-persona-card";
 import { OperatingScheduleCard } from "@/components/settings/operating-schedule-card";
 import { KnowledgeBaseCard } from "@/components/settings/knowledge-base-card";
@@ -258,6 +259,9 @@ export default function SettingsPage() {
 
       {/* Multi-Provider & BoxAPI Architecture Settings */}
       <ProviderSettingsCard accountId={accounts[0]?.id} />
+
+      {/* AI Provider Engine, Official APIs & BoxAPI AI Settings */}
+      <AiProviderCard />
 
       {/* AI Persona, Conversation Goals & Objection Policies */}
       <AiPersonaCard />
