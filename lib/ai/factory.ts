@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/client";
 import { AiProvider } from "./types";
 import { GeminiProvider } from "./providers/gemini-provider";
 import { OpenAIProvider } from "./providers/openai-provider";
+import { BoxApiAiProvider } from "./providers/boxapi-ai-provider";
 import { safeDecryptToken } from "@/lib/meta/oauth";
 
 interface CachedAiEngine {
@@ -64,6 +65,9 @@ export async function getAiEngine(workspaceId: string): Promise<AiProvider> {
   switch (config.provider) {
     case "OPENAI":
       engine = new OpenAIProvider(apiKey, config.model, config.baseUrl || undefined, "OPENAI");
+      break;
+    case "BOXAPI":
+      engine = new BoxApiAiProvider(apiKey, config.model, config.baseUrl || "https://boxapi.ir/api/v1");
       break;
     case "ANTHROPIC":
       engine = new OpenAIProvider(apiKey, config.model, config.baseUrl || "https://api.anthropic.com/v1", "ANTHROPIC");

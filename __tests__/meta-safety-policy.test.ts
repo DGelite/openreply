@@ -154,7 +154,7 @@ describe("Meta Graph API v25.0 Compliance & Safety Suite", () => {
         metadata: {},
         createdAt: new Date(),
         updatedAt: new Date(),
-      });
+      } as any);
 
       const updateSpy = vi.spyOn(prisma.dripEnrollment, "update").mockResolvedValue({} as any);
 

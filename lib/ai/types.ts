@@ -1,6 +1,7 @@
 export type AiProviderName =
   | "GEMINI"
   | "OPENAI"
+  | "BOXAPI"
   | "ANTHROPIC"
   | "DEEPSEEK"
   | "GROK"

@@ -31,6 +31,9 @@ import { executeFlowGraph, type FlowStepResult } from "@/lib/flow/flow-engine";
 import type { FlowGraph } from "@/lib/flow/types";
 import { addTagToLead, removeTagFromLead, getLeadTags } from "@/lib/crm/tags";
 import { enrollUserInDrip, resumeExpiredDripEnrollmentsForUser } from "@/lib/drip/drip-engine";
+import { getAccountOperatingSchedule, isWithinOperatingHours } from "@/lib/scheduling/operating-schedule";
+import { extractPhoneNumber } from "@/lib/ai/phone-extractor";
+import { syncLeadToWampCrm } from "./crm-sync";
 
 export interface IncomingDirectMessageEvent {
   instagramAccountId: string; // IGSID of connected account
@@ -213,6 +216,123 @@ export async function processIncomingDirectMessage(
   await resumeExpiredDripEnrollmentsForUser(instagramAccountId, userId).catch((err) => {
     console.warn("[DM Processor] Error resuming paused drip enrollments:", err);
   });
+
+  // ── 0.1 Check Operating Schedule ──────────────────────────────────────────
+  const scheduleConfig = await getAccountOperatingSchedule(account.id);
+  if (scheduleConfig) {
+    const schedEval = isWithinOperatingHours(scheduleConfig);
+    if (!schedEval.isInside) {
+      if (schedEval.action === "SILENT") {
+        console.log(`[DM Processor] Outside operating hours (SILENT). Skipping automated reply for user ${userId}.`);
+        return;
+      } else if (schedEval.action === "SEND_OFFLINE_MESSAGE") {
+        const offlineMsg = schedEval.offlineMessage || "سلام! در حال حاضر خارج از ساعات کاری هستیم. پیام شما دریافت شد و به زودی پاسخ داده می‌شود.";
+        await sendDirectMessage(accessToken, instagramAccountId, userId, offlineMsg);
+        return;
+      } else if (schedEval.action === "ESCALATE") {
+        await setHumanHandover(account.workspaceId, account.instagramId, userId, true);
+        if (schedEval.offlineMessage) {
+          await sendDirectMessage(accessToken, instagramAccountId, userId, schedEval.offlineMessage);
+        }
+        return;
+      }
+    }
+  }
+
+  // ── 0.2 Intelligent Phone Extraction & CRM Ingestion ──────────────────────
+  const isBufferValid = conversationState.phoneBufferExpiresAt
+    ? conversationState.phoneBufferExpiresAt.getTime() > Date.now()
+    : false;
+
+  const phoneRes = extractPhoneNumber({
+    messageText,
+    previousBuffer: isBufferValid ? conversationState.phoneBuffer : null,
+    bufferAgeMs: isBufferValid && conversationState.phoneBufferExpiresAt
+      ? Date.now() - (conversationState.phoneBufferExpiresAt.getTime() - 180000)
+      : 0,
+  });
+
+  if (phoneRes.detected && phoneRes.phoneNumber) {
+    console.log(`[DM Processor] Phone detected for user ${userId}: ${phoneRes.phoneNumber} (Confidence: ${phoneRes.confidence})`);
+
+    await prisma.conversationState.update({
+      where: { id: conversationState.id },
+      data: {
+        extractedPhone: phoneRes.phoneNumber,
+        phoneConfidence: phoneRes.confidence,
+        phoneOwner: phoneRes.owner,
+        phoneRaw: phoneRes.rawInput || messageText,
+        phoneBuffer: null,
+        phoneBufferExpiresAt: null,
+        conversationStatus: "LEAD_CAPTURED",
+      },
+    });
+
+    await prisma.lead.upsert({
+      where: { id: `lead_${instagramAccountId}_${userId}` },
+      create: {
+        id: `lead_${instagramAccountId}_${userId}`,
+        workspaceId: account.workspaceId,
+        instagramAccountId,
+        userId,
+        username,
+        phone: phoneRes.phoneNumber,
+        phoneConfidence: phoneRes.confidence,
+        phoneOwner: phoneRes.owner,
+        phoneRaw: phoneRes.rawInput || messageText,
+        phoneVerified: phoneRes.confidence >= 0.9,
+        provider: (account.primaryProvider || "META") as any,
+        crmSyncStatus: "PENDING",
+      },
+      update: {
+        phone: phoneRes.phoneNumber,
+        phoneConfidence: phoneRes.confidence,
+        phoneOwner: phoneRes.owner,
+        phoneRaw: phoneRes.rawInput || messageText,
+        username: username ?? undefined,
+        provider: (account.primaryProvider || "META") as any,
+      },
+    });
+
+    // Immediate background sync to WAMP Booking CRM
+    void syncLeadToWampCrm({
+      leadId: `lead_${instagramAccountId}_${userId}`,
+      phone: phoneRes.phoneNumber,
+      username,
+      igsid: userId,
+      instagramAccountId,
+      provider: (account.primaryProvider || "META") as any,
+      lead_source: "openreply-ai-extraction",
+      custom_data: {
+        confidence: phoneRes.confidence,
+        owner: phoneRes.owner,
+        is_correction: phoneRes.isCorrection,
+      },
+    });
+
+    // If conversation was actively awaiting phone, complete it!
+    if (conversationState.step === "AWAITING_PHONE") {
+      await prisma.conversationState.update({
+        where: { id: conversationState.id },
+        data: { step: "COMPLETED" },
+      });
+      await sendDirectMessage(
+        accessToken,
+        instagramAccountId,
+        userId,
+        "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏"
+      );
+      return;
+    }
+  } else if (phoneRes.isPartial && phoneRes.partialBuffer) {
+    await prisma.conversationState.update({
+      where: { id: conversationState.id },
+      data: {
+        phoneBuffer: phoneRes.partialBuffer,
+        phoneBufferExpiresAt: new Date(Date.now() + 3 * 60 * 1000), // 3 min window
+      },
+    });
+  }
 
   // ── 1. Human Handover Check ──────────────────────────────────────────────
   const handoverState = await checkHumanHandoverState(

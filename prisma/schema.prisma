@@ -110,6 +110,7 @@ model Workspace {
   aiAuditLogs         AiAuditLog[]
   leadForms           LeadForm[]
   leadFormSubmissions LeadFormSubmission[]
+  operatingSchedules  OperatingSchedule[]
 
   @@index([ownerId])
 }
@@ -182,6 +183,7 @@ model InstagramAccount {
   healthLogs                 ProviderHealthLog[]
   failoverLogs               ProviderFailoverLog[]
   reconciliationCheckpoints  ReconciliationCheckpoint[]
+  operatingSchedule          OperatingSchedule?
 
   @@index([workspaceId])
   @@index([primaryProvider])
@@ -482,6 +484,17 @@ model ConversationState {
   handoverAt         DateTime?
   lastInteractedAt   DateTime         @default(now())
   metadata           Json             @default("{}")
+
+  // Conversation Management & Intelligent Phone Extraction
+  conversationStatus   String           @default("NEW") // NEW, AI_RESPONDING, NEEDS_INFO, LEAD_CAPTURED, PHONE_VERIFIED, SYNCED_CRM, AWAITING_HUMAN, FOLLOW_UP, CLOSED
+  extractedPhone       String?
+  phoneConfidence      Float?
+  phoneOwner           String?          // "SELF" | "THIRD_PARTY"
+  phoneRaw             String?
+  phoneBuffer          String?          // Multi-message partial phone accumulation
+  phoneBufferExpiresAt DateTime?
+  internalNotes        String?          @db.Text
+
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -510,6 +523,10 @@ model Lead {
   provider           InstagramProviderType @default(META)
   externalUserId     String?               // Global numeric PK or BoxAPI sender ID
   phoneVerified      Boolean               @default(false)
+  phoneConfidence    Float?
+  phoneOwner         String?               // "SELF" | "THIRD_PARTY"
+  phoneRaw           String?
+  phoneNotes         String?               @db.Text
   otpCode            String?
   otpExpiresAt       DateTime?
   otpAttempts        Int                   @default(0)
@@ -769,6 +786,7 @@ model FaqItem {
 enum AiProviderType {
   GEMINI
   OPENAI
+  BOXAPI
   ANTHROPIC
   DEEPSEEK
   GROK
@@ -802,11 +820,26 @@ model AiConfig {
   timeoutMs           Int            @default(15000)
   safetySettings      Json           @default("{}")
 
+  // Business-Specific Persona & Operating Parameters
+  assistantName            String?        @default("دستیار هوشمند")
+  roleTitle                String?        @default("مشاور فروش و پشتیبانی")
+  businessType             String?        @default("کسب‌وکار و خدمات")
+  targetAudience           String?
+  personalityDemeanor      String?
+  preferredWords           Json           @default("[]")
+  forbiddenWords           Json           @default("[]")
+  unhappyClientPolicy      String?        @db.Text
+  priceObjectionPolicy     String?        @db.Text
+  hesitantClientPolicy     String?        @db.Text
+  humanEscalationTriggers  Json           @default("[]")
+  primaryGoal              GoalType       @default(LEAD_GENERATION)
+
   activeHoursEnabled Boolean @default(false)
   activeStartTime    String? @default("17:00")
   activeEndTime      String? @default("08:00")
   timezone           String  @default("Asia/Tehran")
   offlineMessage     String? @db.Text
+  outOfHoursAction   String  @default("OUT_OF_OFFICE_MESSAGE")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1100,6 +1133,26 @@ model ReconciliationCheckpoint {
 
   @@unique([instagramAccountId, postId])
   @@index([lastScannedAt])
+}
+
+model OperatingSchedule {
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String   @unique
+  isEnabled          Boolean  @default(true)
+  timezone           String   @default("Asia/Tehran")
+  scheduleJson       Json     @default("[]") // Array of { dayOfWeek: 0-6, enabled: boolean, intervals: [{ start: "09:00", end: "18:00" }] }
+  holidaysJson       Json     @default("[]") // Array of "YYYY-MM-DD"
+  outOfHoursAction   String   @default("OUT_OF_OFFICE_MESSAGE") // "SILENT" | "OUT_OF_OFFICE_MESSAGE" | "HUMAN_ESCALATION"
+  outOfHoursMessage  String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([instagramAccountId])
 }
 
 

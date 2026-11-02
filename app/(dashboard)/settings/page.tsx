@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import type { AccountOption } from "@/components/account-select";
 import { useLanguage } from "@/context/language-context";
 import { ProviderSettingsCard } from "@/components/settings/provider-settings-card";
+import { AiPersonaCard } from "@/components/settings/ai-persona-card";
+import { OperatingScheduleCard } from "@/components/settings/operating-schedule-card";
+import { KnowledgeBaseCard } from "@/components/settings/knowledge-base-card";
 
 interface SettingsData {
   workspace: {
@@ -255,6 +258,15 @@ export default function SettingsPage() {
 
       {/* Multi-Provider & BoxAPI Architecture Settings */}
       <ProviderSettingsCard accountId={accounts[0]?.id} />
+
+      {/* AI Persona, Conversation Goals & Objection Policies */}
+      <AiPersonaCard />
+
+      {/* Operating Schedule, Active Working Hours & Holidays */}
+      <OperatingScheduleCard accountId={accounts[0]?.id} />
+
+      {/* RAG Business Knowledge Base */}
+      <KnowledgeBaseCard />
 
       {/* Team Management */}
       <section className="panel rounded p-6">
