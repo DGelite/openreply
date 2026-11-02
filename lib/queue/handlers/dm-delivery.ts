@@ -1,12 +1,5 @@
 import { prisma } from "@/lib/db/client";
-import {
-  sendDirectMessage,
-  sendDirectMessageWithLinkButton,
-  sendPrivateReply,
-  sendPrivateReplyWithButton,
-  sendPrivateReplyWithLinkButton,
-  applyDangerZoneBackoff,
-} from "@/lib/meta/client";
+import { applyDangerZoneBackoff } from "@/lib/meta/client";
 import { selectDmMessageVariation } from "@/lib/automation/ab-testing";
 import {
   buildTrackedUrl,
@@ -16,6 +9,7 @@ import {
 import { executeFlowGraph } from "@/lib/flow/flow-engine";
 import type { FlowGraph } from "@/lib/flow/types";
 import type { AutomationWithAccountAndLinks } from "./types";
+import { providerManager } from "@/lib/providers/manager/provider-manager";
 
 export async function deliverPrivateReply(params: {
   automation: AutomationWithAccountAndLinks;
@@ -34,8 +28,10 @@ export async function deliverPrivateReply(params: {
     commentText,
   } = params;
 
-  // Apply danger zone backoff before every Meta send
+  // Apply danger zone backoff before sending
   await applyDangerZoneBackoff();
+
+  const accountId = automation.instagramAccount.id;
 
   const hasFlowGraph =
     automation.flowGraph &&
@@ -68,39 +64,44 @@ export async function deliverPrivateReply(params: {
             workspaceId: automation.workspaceId,
             instagramAccountId: automation.instagramAccount.instagramId,
             userId: commenterId,
-            step: step.requiresInput,
             automationId: automation.id,
+            activeNodeId: step.nodeId,
+            step: "FLOW_NODE",
           },
           update: {
-            step: step.requiresInput,
             automationId: automation.id,
+            activeNodeId: step.nodeId,
+            step: "FLOW_NODE",
+            updatedAt: new Date(),
           },
         });
+
         if (step.dmMessageToSend) {
           const bodyText = renderMessageWithTracking({
             message: step.dmMessageToSend,
             commenterName,
             trackedLinks: automation.trackedLinks,
           });
-          await sendPrivateReply(
-            accessToken,
-            automation.instagramAccount.instagramId,
-            commentId,
-            bodyText
-          );
+          await providerManager.privateReply(accountId, commentId, bodyText);
         }
         break;
       }
 
       if (step.dmMessageToSend) {
         if (step.linkButton) {
-          await sendPrivateReplyWithLinkButton(
-            accessToken,
-            automation.instagramAccount.instagramId,
+          await providerManager.privateReply(
+            accountId,
             commentId,
             step.dmMessageToSend,
-            step.linkButton.label,
-            step.linkButton.url
+            {
+              buttons: [
+                {
+                  type: "web_url",
+                  title: step.linkButton.label,
+                  url: step.linkButton.url,
+                },
+              ],
+            }
           );
         } else {
           const dmMessage = renderMessageWithTracking({
@@ -108,12 +109,7 @@ export async function deliverPrivateReply(params: {
             commenterName,
             trackedLinks: automation.trackedLinks,
           });
-          await sendPrivateReply(
-            accessToken,
-            automation.instagramAccount.instagramId,
-            commentId,
-            dmMessage
-          );
+          await providerManager.privateReply(accountId, commentId, dmMessage);
         }
       }
     }
@@ -145,13 +141,19 @@ export async function deliverPrivateReply(params: {
       commenterName,
       trackedLinks: [],
     });
-    await sendPrivateReplyWithButton(
-      accessToken,
-      automation.instagramAccount.instagramId,
+    await providerManager.privateReply(
+      accountId,
       commentId,
       openingText,
-      automation.openingDmButtonLabel as string,
-      `reveal:${automation.id}`
+      {
+        buttons: [
+          {
+            type: "postback",
+            title: automation.openingDmButtonLabel as string,
+            payload: `reveal:${automation.id}`,
+          },
+        ],
+      }
     );
   } else if (automation.trackedLinks[0]) {
     const selectedMessage = selectDmMessageVariation(automation.dmMessage);
@@ -160,13 +162,19 @@ export async function deliverPrivateReply(params: {
         message: selectedMessage,
         commenterName,
       }) || "Here's your link:";
-    await sendPrivateReplyWithLinkButton(
-      accessToken,
-      automation.instagramAccount.instagramId,
+    await providerManager.privateReply(
+      accountId,
       commentId,
       bodyText,
-      automation.linkButtonLabel || "Open link",
-      buildTrackedUrl(automation.trackedLinks[0].slug)
+      {
+        buttons: [
+          {
+            type: "web_url",
+            title: automation.linkButtonLabel || "Open link",
+            url: buildTrackedUrl(automation.trackedLinks[0].slug),
+          },
+        ],
+      }
     );
   } else {
     const selectedMessage = selectDmMessageVariation(automation.dmMessage);
@@ -175,12 +183,7 @@ export async function deliverPrivateReply(params: {
       commenterName,
       trackedLinks: automation.trackedLinks,
     });
-    await sendPrivateReply(
-      accessToken,
-      automation.instagramAccount.instagramId,
-      commentId,
-      dmMessage
-    );
+    await providerManager.privateReply(accountId, commentId, dmMessage);
   }
 
   await prisma.dmLog.update({
@@ -209,6 +212,7 @@ export async function deliverPostbackReveal(params: {
 
   await applyDangerZoneBackoff();
 
+  const accountId = automation.instagramAccount.id;
   const primaryLink = automation.trackedLinks[0];
 
   if (primaryLink) {
@@ -217,13 +221,19 @@ export async function deliverPostbackReveal(params: {
         message: automation.dmMessage,
         commenterName,
       }) || "Here's your link:";
-    await sendDirectMessageWithLinkButton(
-      accessToken,
-      automation.instagramAccount.instagramId,
+    await providerManager.sendTextMessage(
+      accountId,
       userId,
       bodyText,
-      automation.linkButtonLabel || "Open link",
-      buildTrackedUrl(primaryLink.slug)
+      {
+        buttons: [
+          {
+            type: "web_url",
+            title: automation.linkButtonLabel || "Open link",
+            url: buildTrackedUrl(primaryLink.slug),
+          },
+        ],
+      }
     );
   } else {
     const revealMessage = renderMessageWithTracking({
@@ -231,9 +241,8 @@ export async function deliverPostbackReveal(params: {
       commenterName,
       trackedLinks: automation.trackedLinks,
     });
-    await sendDirectMessage(
-      accessToken,
-      automation.instagramAccount.instagramId,
+    await providerManager.sendTextMessage(
+      accountId,
       userId,
       revealMessage
     );

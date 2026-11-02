@@ -15,15 +15,19 @@ import {
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 import { selectDmMessageVariation } from "@/lib/automation/ab-testing";
 import { dispatchOutboundLeadWebhook } from "@/lib/automation/outbound-webhook";
+import { prisma } from "@/lib/db/client";
+import { providerManager } from "@/lib/providers/manager/provider-manager";
 
 export interface FlowExecutionContext {
   workspaceId: string;
   instagramAccountId: string;
+  accountId?: string;
   userId: string;
   username?: string;
   userMessage?: string;
   hasEmail?: boolean;
   hasPhone?: boolean;
+  isFollowing?: boolean;
   userTags?: string[];
   selectedQuickReplyPayload?: string;
   clickedButtonPayload?: string;
@@ -64,6 +68,8 @@ export function evaluateConditionNode(
       return Boolean(context.hasEmail);
     case "has_phone":
       return Boolean(context.hasPhone);
+    case "is_following":
+      return Boolean(context.isFollowing);
     case "has_tag":
       if (!value || !context.userTags) return false;
       return context.userTags.includes(value.trim().toLowerCase());
@@ -189,6 +195,28 @@ export async function executeFlowGraph(
 
     // 5. Process Condition Node
     else if (currentNode.type === "condition" && currentNode.data.type === "condition") {
+      if (
+        currentNode.data.config.variable === "is_following" &&
+        context.isFollowing === undefined
+      ) {
+        try {
+          const account = context.accountId
+            ? { id: context.accountId }
+            : await prisma.instagramAccount.findUnique({
+                where: { instagramId: context.instagramAccountId },
+                select: { id: true },
+              });
+          if (account?.id) {
+            context.isFollowing = await providerManager.checkFollowStatus(
+              account.id,
+              context.userId
+            );
+          }
+        } catch {
+          context.isFollowing = false;
+        }
+      }
+
       const conditionPassed = evaluateConditionNode(currentNode, context);
       const targetBranch = conditionPassed ? "yes" : "no";
 

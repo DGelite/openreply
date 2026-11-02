@@ -105,7 +105,11 @@ export async function processComment(data: ProcessCommentJob, attemptsMade: numb
       continue;
     }
 
-    if (!automation.instagramAccount.accessToken) {
+    const isBoxApiPrimary =
+      automation.instagramAccount.orchestrationMode === "BOXAPI_PRIMARY" ||
+      (Boolean(automation.instagramAccount.boxApiKey) && !automation.instagramAccount.accessToken);
+
+    if (!automation.instagramAccount.accessToken && !isBoxApiPrimary) {
       await prisma.dmLog.upsert({
         where: {
           automationId_commentId: {
@@ -133,35 +137,39 @@ export async function processComment(data: ProcessCommentJob, attemptsMade: numb
       continue;
     }
 
-    let accessToken: string;
-    try {
-      accessToken = safeDecryptToken(automation.instagramAccount.accessToken);
-    } catch {
-      await prisma.dmLog.upsert({
-        where: {
-          automationId_commentId: {
-            automationId: automation.id,
-            commentId,
-          },
-        },
-        create: {
-          workspaceId: automation.workspaceId,
-          automationId: automation.id,
-          instagramAccountId: automation.instagramAccountId,
-          commenterId,
-          commenterName,
-          commentText,
-          commentId,
-          matchedKeyword: matchResult.matchedKeyword,
-          status: "FAILED",
-          errorMessage: "Failed to decrypt Instagram access token",
-        },
-        update: {
-          status: "FAILED",
-          errorMessage: "Failed to decrypt Instagram access token",
-        },
-      });
-      continue;
+    let accessToken = "";
+    if (automation.instagramAccount.accessToken) {
+      try {
+        accessToken = safeDecryptToken(automation.instagramAccount.accessToken);
+      } catch {
+        if (!isBoxApiPrimary) {
+          await prisma.dmLog.upsert({
+            where: {
+              automationId_commentId: {
+                automationId: automation.id,
+                commentId,
+              },
+            },
+            create: {
+              workspaceId: automation.workspaceId,
+              automationId: automation.id,
+              instagramAccountId: automation.instagramAccountId,
+              commenterId,
+              commenterName,
+              commentText,
+              commentId,
+              matchedKeyword: matchResult.matchedKeyword,
+              status: "FAILED",
+              errorMessage: "Failed to decrypt Instagram access token",
+            },
+            update: {
+              status: "FAILED",
+              errorMessage: "Failed to decrypt Instagram access token",
+            },
+          });
+          continue;
+        }
+      }
     }
 
     if (!existingLog) {
@@ -341,11 +349,15 @@ export async function processPostback(data: ProcessPostbackJob, attemptsMade: nu
     },
   });
 
-  if (
-    !automation ||
-    automation.instagramAccount.instagramId !== instagramAccountId ||
-    !automation.instagramAccount.accessToken
-  ) {
+  if (!automation || automation.instagramAccount.instagramId !== instagramAccountId) {
+    return;
+  }
+
+  const isBoxApiPrimary =
+    automation.instagramAccount.orchestrationMode === "BOXAPI_PRIMARY" ||
+    (Boolean(automation.instagramAccount.boxApiKey) && !automation.instagramAccount.accessToken);
+
+  if (!automation.instagramAccount.accessToken && !isBoxApiPrimary) {
     return;
   }
 
@@ -367,11 +379,13 @@ export async function processPostback(data: ProcessPostbackJob, attemptsMade: nu
     return;
   }
 
-  let accessToken: string;
-  try {
-    accessToken = safeDecryptToken(automation.instagramAccount.accessToken);
-  } catch {
-    return;
+  let accessToken = "";
+  if (automation.instagramAccount.accessToken) {
+    try {
+      accessToken = safeDecryptToken(automation.instagramAccount.accessToken);
+    } catch {
+      if (!isBoxApiPrimary) return;
+    }
   }
 
   let rateLimit;

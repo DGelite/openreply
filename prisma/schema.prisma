@@ -162,12 +162,30 @@ model InstagramAccount {
   connectedAt       DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  automations Automation[]
-  dmLogs      DmLog[]
-  linkClicks  LinkClick[]
+  // Multi-Provider & BoxAPI Configuration
+  primaryProvider     InstagramProviderType     @default(META)
+  backupProvider      InstagramProviderType?
+  orchestrationMode   ProviderOrchestrationMode @default(META_PRIMARY)
+  boxApiToken         String?                   @db.Text
+  boxAccountId        String?
+  boxApiKey           String?                   @db.Text
+  boxWebhookSecret    String?                   @db.Text
+  boxConnectedAt      DateTime?
+  metaConnectedAt     DateTime?
+  lastFailoverAt      DateTime?
+  failoverCount       Int                       @default(0)
+
+  workspace                  Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automations                Automation[]
+  dmLogs                     DmLog[]
+  linkClicks                 LinkClick[]
+  healthLogs                 ProviderHealthLog[]
+  failoverLogs               ProviderFailoverLog[]
+  reconciliationCheckpoints  ReconciliationCheckpoint[]
 
   @@index([workspaceId])
+  @@index([primaryProvider])
+  @@index([orchestrationMode])
 }
 
 model Automation {
@@ -446,6 +464,7 @@ enum ConversationStep {
   IDLE
   AWAITING_EMAIL
   AWAITING_PHONE
+  AWAITING_OTP
   FLOW_NODE
   COMPLETED
 }
@@ -479,13 +498,27 @@ model Lead {
   id                 String   @id @default(cuid())
   workspaceId        String
   instagramAccountId String
-  userId             String // IGSID
+  userId             String // IGSID or provider-scoped ID
   username           String?
   name               String?
   email              String?
   phone              String?
   sourceAutomationId String?
   customData         Json     @default("{}")
+
+  // Multi-Provider & Verification Tracking
+  provider           InstagramProviderType @default(META)
+  externalUserId     String?               // Global numeric PK or BoxAPI sender ID
+  phoneVerified      Boolean               @default(false)
+  otpCode            String?
+  otpExpiresAt       DateTime?
+  otpAttempts        Int                   @default(0)
+  otpChannel         String?               // "SMS" | "DIRECT"
+  crmSyncStatus      CrmSyncStatus         @default(PENDING)
+  crmLeadId          String?
+  crmSyncedAt        DateTime?
+  crmError           String?               @db.Text
+
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -498,6 +531,8 @@ model Lead {
   @@index([userId])
   @@index([email])
   @@index([phone])
+  @@index([provider])
+  @@index([crmSyncStatus])
 }
 
 model Tag {
@@ -980,4 +1015,91 @@ model LeadFormSubmission {
   @@index([workspaceId])
   @@index([createdAt])
 }
+
+// ─── Multi-Provider & High Availability Models ──────────────────────────────
+
+enum InstagramProviderType {
+  META
+  BOXAPI
+}
+
+enum ProviderOrchestrationMode {
+  BOXAPI_PRIMARY
+  META_PRIMARY
+  SMART_HYBRID
+}
+
+enum CrmSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+  RETRYING
+}
+
+model InboundEventLedger {
+  id             String                @id @default(cuid())
+  idempotencyKey String                @unique // hash(provider + "_" + accountId + "_" + itemPk)
+  provider       InstagramProviderType
+  accountId      String
+  eventType      String                // COMMENT, DIRECT_MESSAGE, POSTBACK, REACTION, ECHO, RECONCILIATION
+  rawPayload     Json
+  source         String                // WEBHOOK_META, WEBHOOK_BOXAPI, RECONCILIATION_WORKER
+  processed      Boolean               @default(false)
+  processedAt    DateTime?
+  error          String?               @db.Text
+  createdAt      DateTime              @default(now())
+
+  @@index([provider, accountId])
+  @@index([processed, createdAt])
+  @@index([eventType])
+}
+
+model ProviderHealthLog {
+  id                 String                @id @default(cuid())
+  instagramAccountId String
+  provider           InstagramProviderType
+  status             String                // HEALTHY, DEGRADED, DOWN, CIRCUIT_OPEN, COOLDOWN
+  latencyMs          Int?
+  statusCode         Int?
+  errorMessage       String?               @db.Text
+  checkType          String                // SYNTHETIC_PING, OUTBOUND_SEND, WEBHOOK_HEARTBEAT
+  createdAt          DateTime              @default(now())
+
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+
+  @@index([instagramAccountId, provider, createdAt])
+}
+
+model ProviderFailoverLog {
+  id                 String                @id @default(cuid())
+  instagramAccountId String
+  fromProvider       InstagramProviderType
+  toProvider         InstagramProviderType
+  reason             String                @db.Text
+  errorCategory      String                // AUTH_EXPIRED, RATE_LIMIT, POLICY_368, TIMEOUT, OUTAGE
+  automatic          Boolean               @default(true)
+  recoveredAt        DateTime?
+  createdAt          DateTime              @default(now())
+
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+
+  @@index([instagramAccountId, createdAt])
+}
+
+model ReconciliationCheckpoint {
+  id                 String    @id @default(cuid())
+  instagramAccountId String
+  postId             String
+  lastCommentTakenAt DateTime?
+  lastCommentId      String?
+  lastScannedAt      DateTime  @default(now())
+  scannedCount       Int       @default(0)
+  recoveredCount     Int       @default(0)
+
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([instagramAccountId, postId])
+  @@index([lastScannedAt])
+}
+
 

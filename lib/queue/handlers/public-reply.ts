@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/db/client";
-import { sendCommentReply, applyDangerZoneBackoff } from "@/lib/meta/client";
+import { applyDangerZoneBackoff } from "@/lib/meta/client";
 import { renderMessageWithTracking } from "@/lib/tracking/message";
 import { formatError } from "./error-handler";
 import type { AutomationWithAccountAndLinks } from "./types";
+import { providerManager } from "@/lib/providers/manager/provider-manager";
 
 export async function handlePublicCommentReply(params: {
   automation: AutomationWithAccountAndLinks;
@@ -36,7 +37,17 @@ export async function handlePublicCommentReply(params: {
       commenterName,
       trackedLinks: automation.trackedLinks,
     });
-    await sendCommentReply(accessToken, commentId, publicReply);
+
+    const result = await providerManager.replyComment(
+      automation.instagramAccount.id,
+      commentId,
+      publicReply
+    );
+
+    if (!result.success) {
+      throw new Error(result.error || "Failed to send public comment reply");
+    }
+
     await prisma.dmLog.update({
       where: {
         automationId_commentId: { automationId: automation.id, commentId },
@@ -58,3 +69,4 @@ export async function handlePublicCommentReply(params: {
       .catch(() => {});
   }
 }
+

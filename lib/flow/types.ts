@@ -88,7 +88,7 @@ export interface QuickReplyNodeData {
 }
 
 export interface ConditionNodeData {
-  variable: "has_email" | "has_phone" | "has_tag" | "keyword_match" | "custom";
+  variable: "has_email" | "has_phone" | "has_tag" | "keyword_match" | "is_following" | "custom";
   operator: "equals" | "contains" | "is_not_empty";
   value?: string;
 }

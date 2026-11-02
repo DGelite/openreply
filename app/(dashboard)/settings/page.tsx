@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AccountOption } from "@/components/account-select";
 import { useLanguage } from "@/context/language-context";
+import { ProviderSettingsCard } from "@/components/settings/provider-settings-card";
 
 interface SettingsData {
   workspace: {
@@ -251,6 +252,9 @@ export default function SettingsPage() {
           </a>
         </div>
       </section>
+
+      {/* Multi-Provider & BoxAPI Architecture Settings */}
+      <ProviderSettingsCard accountId={accounts[0]?.id} />
 
       {/* Team Management */}
       <section className="panel rounded p-6">

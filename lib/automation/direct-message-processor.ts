@@ -17,6 +17,7 @@ import {
 import { isAccountInCooldown, tripAccountCooldown } from "@/lib/meta/circuit-breaker";
 import { reserveDMSlot } from "@/lib/utils/rate-limiter";
 import { enqueueJob } from "@/lib/queue/mysql-queue";
+import { providerManager } from "@/lib/providers/manager/provider-manager";
 import { processLeadStep } from "./email-phone-collector";
 import { registerGiveawayEntry } from "./giveaway-engine";
 import { claimCoupon } from "./coupon-engine";
@@ -76,6 +77,28 @@ export async function processIncomingDirectMessage(
 
   const effectiveAttempts = Math.max(attemptsMade, requeueAttempt);
 
+  const account = await prisma.instagramAccount.findUnique({
+    where: { instagramId: instagramAccountId },
+    include: { workspace: true },
+  });
+
+  if (!account) return;
+
+  const isBoxApiPrimary =
+    account.orchestrationMode === "BOXAPI_PRIMARY" ||
+    (Boolean(account.boxApiKey) && !account.accessToken);
+
+  if (!account.accessToken && !isBoxApiPrimary) return;
+
+  let accessToken = "";
+  if (account.accessToken) {
+    try {
+      accessToken = safeDecryptToken(account.accessToken);
+    } catch {
+      if (!isBoxApiPrimary) return;
+    }
+  }
+
   const safeSend = async <T>(action: () => Promise<T>): Promise<T | void> => {
     const cooldown = isAccountInCooldown(instagramAccountId);
     if (cooldown.inCooldown) {
@@ -113,36 +136,62 @@ export async function processIncomingDirectMessage(
   };
 
   const sendDirectMessage = (t: string, accId: string, uId: string, msg: string) => 
-    safeSend(() => rawSendDirectMessage(t, accId, uId, msg));
+    safeSend(async () => {
+      const res = await providerManager.sendTextMessage(account.id, uId, msg);
+      if (!res.success) throw new Error(res.error || "Failed to send DM");
+      return res;
+    });
   
   const sendDirectMessageWithLinkButton = (t: string, accId: string, uId: string, msg: string, lbl: string, url: string) => 
-    safeSend(() => rawSendDirectMessageWithLinkButton(t, accId, uId, msg, lbl, url));
+    safeSend(async () => {
+      const res = await providerManager.sendTextMessage(account.id, uId, msg, {
+        buttons: [{ type: "web_url", title: lbl, url }],
+      });
+      if (!res.success) throw new Error(res.error || "Failed to send DM with link button");
+      return res;
+    });
 
   const sendDirectMediaMessage = (t: string, accId: string, uId: string, type: "image" | "video" | "audio", url: string) =>
-    safeSend(() => rawSendDirectMediaMessage(t, accId, uId, type, url));
+    safeSend(async () => {
+      const attType = type === "audio" ? "voice" : type;
+      const res = await providerManager.sendAttachment(account.id, uId, attType, url);
+      if (!res.success) throw new Error(res.error || "Failed to send media DM");
+      return res;
+    });
 
   const sendDirectGenericTemplate = (t: string, accId: string, uId: string, elements: any[]) =>
-    safeSend(() => rawSendDirectGenericTemplate(t, accId, uId, elements));
+    safeSend(async () => {
+      const res = await providerManager.sendGenericTemplate(account.id, uId, elements);
+      if (!res.success) throw new Error(res.error || "Failed to send generic template DM");
+      return res;
+    });
 
   const sendDirectQuickReplies = (t: string, accId: string, uId: string, text: string, quickReplies: any[]) =>
-    safeSend(() => rawSendDirectQuickReplies(t, accId, uId, text, quickReplies));
+    safeSend(async () => {
+      const res = await providerManager.sendTextMessage(account.id, uId, text, {
+        quick_replies: quickReplies.map((qr) => ({
+          content_type: "text",
+          title: qr.title,
+          payload: qr.payload,
+        })),
+      });
+      if (!res.success) throw new Error(res.error || "Failed to send quick replies DM");
+      return res;
+    });
 
   const sendDirectMessageWithMultipleButtons = (t: string, accId: string, uId: string, text: string, buttons: any[]) =>
-    safeSend(() => rawSendDirectMessageWithMultipleButtons(t, accId, uId, text, buttons));
-
-  const account = await prisma.instagramAccount.findUnique({
-    where: { instagramId: instagramAccountId },
-    include: { workspace: true },
-  });
-
-  if (!account || !account.accessToken) return;
-
-  let accessToken: string;
-  try {
-    accessToken = safeDecryptToken(account.accessToken);
-  } catch {
-    return;
-  }
+    safeSend(async () => {
+      const res = await providerManager.sendTextMessage(account.id, uId, text, {
+        buttons: buttons.map((b) => ({
+          type: b.type === "web_url" ? "web_url" : "postback",
+          title: b.title,
+          url: b.url,
+          payload: b.payload,
+        })),
+      });
+      if (!res.success) throw new Error(res.error || "Failed to send multiple buttons DM");
+      return res;
+    });
 
   // ── 0. Update 24-Hour Messaging Window & Resume Paused Drips ────────────
   const conversationState = await prisma.conversationState.upsert({
@@ -186,7 +235,8 @@ export async function processIncomingDirectMessage(
   if (
     conversationState &&
     (conversationState.step === "AWAITING_EMAIL" ||
-      conversationState.step === "AWAITING_PHONE")
+      conversationState.step === "AWAITING_PHONE" ||
+      conversationState.step === "AWAITING_OTP")
   ) {
     const leadResult = await processLeadStep({
       workspaceId: account.workspaceId,
@@ -194,8 +244,9 @@ export async function processIncomingDirectMessage(
       userId,
       username,
       userMessage: messageText,
-      currentStep: conversationState.step,
+      currentStep: conversationState.step as any,
       automationId: conversationState.automationId ?? undefined,
+      provider: (account.primaryProvider || "META") as any,
     });
 
     if (leadResult.replyMessage) {
