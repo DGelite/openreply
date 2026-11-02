@@ -11,7 +11,10 @@ import {
   FlowButton,
   CarouselCard,
   QuickReplyChip,
+  FlowStepResult,
 } from "./types";
+
+export type { FlowStepResult };
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 import { selectDmMessageVariation } from "@/lib/automation/ab-testing";
 import { dispatchOutboundLeadWebhook } from "@/lib/automation/outbound-webhook";
@@ -33,25 +36,7 @@ export interface FlowExecutionContext {
   clickedButtonPayload?: string;
 }
 
-export interface FlowStepResult {
-  nodeId: string;
-  nodeType: string;
-  actionTaken: string;
-  nextStepNodeId?: string;
-  dmMessageToSend?: string;
-  buttons?: FlowButton[];
-  linkButton?: { label: string; url: string };
-  mediaToSend?: { mediaType: "image" | "video" | "audio"; mediaUrl: string; caption?: string };
-  carouselToSend?: { cards: CarouselCard[] };
-  quickRepliesToSend?: { text: string; chips: QuickReplyChip[] };
-  requiresInput?: "AWAITING_EMAIL" | "AWAITING_PHONE" | "FLOW_NODE";
-  tagAction?: { action: "add" | "remove"; tagName: string };
-  enrollDripCampaignId?: string;
-  isAiReply?: boolean;
-  aiInstruction?: string;
-  isHumanHandover?: boolean;
-  delayMinutes?: number;
-}
+
 
 /**
  * Evaluates a condition node against the current execution context.

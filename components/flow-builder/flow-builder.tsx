@@ -25,8 +25,8 @@ import {
   FlowNode as DomainNode,
   FlowEdge as DomainEdge,
   FlowNodeType,
+  FlowStepResult,
 } from "@/lib/flow/types";
-import { executeFlowGraph, FlowStepResult } from "@/lib/flow/flow-engine";
 
 interface FlowBuilderProps {
   initialGraph?: FlowGraph;
@@ -319,16 +319,19 @@ function FlowBuilderInner({
       nodes: nodes.map(reactFlowNodeToDomainNode),
       edges: edges.map(reactFlowEdgeToDomainEdge),
     };
-    const results = await executeFlowGraph(domainGraph, {
-      workspaceId: "test_ws",
-      instagramAccountId: "test_ig",
-      userId: "user_test_123",
-      username: "test_user",
-      userMessage: testMessage,
-      hasEmail: false,
-      hasPhone: false,
-    });
-    setTestResults(results);
+    try {
+      const res = await fetch("/api/flows/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ graph: domainGraph, testMessage }),
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.results)) {
+        setTestResults(data.results);
+      }
+    } catch (err) {
+      console.error("Test execution failed:", err);
+    }
   };
 
   const selectedDomainNode = nodes.find((n) => n.id === selectedNodeId)
