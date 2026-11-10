@@ -99,6 +99,40 @@ export async function POST(req: NextRequest) {
       : await prisma.instagramAccount.findFirst({ where: { workspaceId }, orderBy: { connectedAt: "desc" } });
 
     if (!account) {
+      if (body.boxApiKey && body.boxAccountId) {
+        const fallbackUsername = body.username ? String(body.username).replace(/^@/, "").trim() : `box_${body.boxAccountId}`;
+        const newAccount = await prisma.instagramAccount.create({
+          data: {
+            workspaceId,
+            instagramId: body.boxAccountId.trim(),
+            username: fallbackUsername,
+            name: fallbackUsername,
+            accessToken: "BOXAPI_STANDALONE",
+            primaryProvider: body.primaryProvider || "BOXAPI",
+            orchestrationMode: body.orchestrationMode || "BOXAPI_PRIMARY",
+            backupProvider: body.backupProvider || null,
+            boxAccountId: body.boxAccountId.trim(),
+            boxApiKey: body.boxApiKey.trim(),
+            boxApiToken: body.boxApiToken ? body.boxApiToken.trim() : null,
+            boxWebhookSecret: body.boxWebhookSecret ? body.boxWebhookSecret.trim() : null,
+            boxConnectedAt: new Date(),
+            webhookSubscribed: true,
+          },
+        });
+        return NextResponse.json({
+          success: true,
+          message: "اکانت اینستاگرام با موفقیت ایجاد و تنظیمات BoxAPI ذخیره شد.",
+          data: {
+            accountId: newAccount.id,
+            orchestrationMode: newAccount.orchestrationMode,
+            primaryProvider: newAccount.primaryProvider,
+            hasBoxApiKey: true,
+            hasBoxApiToken: Boolean(newAccount.boxApiToken),
+            hasBoxWebhookSecret: Boolean(newAccount.boxWebhookSecret),
+          },
+        });
+      }
+
       return NextResponse.json(
         { success: false, error: "Instagram account not found in workspace" },
         { status: 404 }

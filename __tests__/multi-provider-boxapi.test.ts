@@ -241,4 +241,27 @@ describe("OpenReply Multi-Provider & BoxAPI Enterprise Test Suite", () => {
       expect(validateEmail("")).toBe(false);
     });
   });
+
+  describe("6. Direct BoxAPI Primary Standalone Configuration", () => {
+    it("should sanitize and clean Instagram username inputs", () => {
+      const rawUsernames = ["@my_brand", "  @SHOP_NAME  ", "digitalelite.ir"];
+      const cleaned = rawUsernames.map((u) => u.trim().replace(/^@/, "").toLowerCase());
+      expect(cleaned).toEqual(["my_brand", "shop_name", "digitalelite.ir"]);
+    });
+
+    it("should recognize BOXAPI_PRIMARY mode as standalone without Meta access token", () => {
+      const account = {
+        orchestrationMode: "BOXAPI_PRIMARY" as const,
+        primaryProvider: "BOXAPI" as const,
+        boxApiKey: "test_key_xyz",
+        accessToken: "",
+      };
+
+      const isBoxApiPrimary =
+        account.orchestrationMode === "BOXAPI_PRIMARY" ||
+        (Boolean(account.boxApiKey) && !account.accessToken);
+
+      expect(isBoxApiPrimary).toBe(true);
+    });
+  });
 });

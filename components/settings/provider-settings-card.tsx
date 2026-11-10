@@ -173,7 +173,37 @@ export function ProviderSettingsCard({ accountId }: { accountId?: string }) {
   }
 
   if (!config) {
-    return null;
+    return (
+      <section className="panel rounded p-6 border border-dashed border-border/80 bg-surface/30">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/60 mb-4">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">
+              {isFa ? "معماری Multi-Provider و تنظیمات BoxAPI" : "Multi-Provider & BoxAPI Architecture"}
+            </h2>
+            <p className="text-xs text-muted mt-0.5">
+              {isFa
+                ? "پیکربندی استراتژی ارسال، BoxAPI به عنوان روش اصلی، هات‌فیل‌اور و حسابرسی پیام‌ها"
+                : "Orchestration strategy, BoxAPI primary standalone mode, hot failover, and message audits."}
+            </p>
+          </div>
+          <span className="px-3 py-1 rounded-full text-xs font-medium bg-muted/10 text-muted border border-border mt-2 sm:mt-0">
+            {isFa ? "در انتظار اتصال پیج" : "Account Required"}
+          </span>
+        </div>
+        <div className="text-center py-6 px-4">
+          <p className="text-sm font-medium text-foreground">
+            {isFa
+              ? "هنوز هیچ اکانت اینستاگرامی به این ورک‌اسپیس متصل نشده است."
+              : "No Instagram account is connected to this workspace yet."}
+          </p>
+          <p className="text-xs text-muted mt-2 max-w-lg mx-auto leading-relaxed">
+            {isFa
+              ? "برای اینکه BoxAPI روش اصلی (Primary) شما باشد، از کادر بالای همین صفحه گزینه «اتصال با BoxAPI» را انتخاب کنید و شناسه اکانت و کلید API خود را وارد نمایید. پس از اتصال، تمام کنترل‌های پیشرفته و تست سلامت فعال خواهند شد."
+              : "To make BoxAPI your primary method, select 'Connect via BoxAPI' in the card above and enter your credentials. Advanced orchestration will activate immediately."}
+          </p>
+        </div>
+      </section>
+    );
   }
 
   return (
