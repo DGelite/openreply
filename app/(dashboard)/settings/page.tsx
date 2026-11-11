@@ -8,6 +8,7 @@ import { AiProviderCard } from "@/components/settings/ai-provider-card";
 import { AiPersonaCard } from "@/components/settings/ai-persona-card";
 import { OperatingScheduleCard } from "@/components/settings/operating-schedule-card";
 import { KnowledgeBaseCard } from "@/components/settings/knowledge-base-card";
+import { BookingSettingsCard } from "@/components/settings/booking-settings-card";
 
 interface SettingsData {
   workspace: {
@@ -631,90 +632,8 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* PHP CRM Integration */}
-      <section className="panel rounded p-6">
-        <h2 className="text-base font-semibold mb-2 text-foreground">
-          {isFa ? "یکپارچه‌سازی با PHP CRM و سیستم رزرو" : "PHP CRM & Booking Integration"}
-        </h2>
-        <p className="text-xs text-muted mb-6">
-          {isFa
-            ? "اتصال به سرور PHP (تنظیم شده در فایل env) — یکپارچه‌سازی اتوماتیک رزرو نوبت و CRM"
-            : "Connect to PHP server (configured in .env) for automated appointment booking & CRM sync."}
-        </p>
-
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy("test_booking_api");
-            setMemberError(null);
-            try {
-              const formData = new FormData(e.currentTarget);
-              const apiUrl = formData.get("apiUrl") as string;
-              const apiSecret = formData.get("apiSecret") as string;
-
-              const res = await fetch("/api/settings/booking", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ apiUrl, apiSecret }),
-              });
-              const payload = await res.json();
-
-              if (payload.success) {
-                setAlertMessage({ type: "success", text: `✅ ${payload.message}` });
-              } else {
-                setMemberError(payload.error || (isFa ? "خطا در برقراری ارتباط" : "Failed to connect"));
-              }
-            } catch {
-              setMemberError(isFa ? "خطا در ارسال درخواست برقراری ارتباط" : "Error sending test request");
-            } finally {
-              setBusy(null);
-            }
-          }}
-          className="space-y-4"
-        >
-          <div>
-            <label className="block text-xs font-semibold mb-1 text-foreground">
-              {isFa ? "آدرس سرور PHP (Booking Gateway URL)" : "PHP Server URL (admin.php)"}
-            </label>
-            <input
-              type="text"
-              name="apiUrl"
-              defaultValue={process.env.NEXT_PUBLIC_BOOKING_API_URL || process.env.NEXT_PUBLIC_PHP_ADMIN_API_URL || "http://localhost/admin.php"}
-              placeholder="http://localhost/admin.php"
-              className="w-full rounded border border-border bg-surface px-4 py-2 text-sm text-foreground outline-none transition-colors focus:border-accent/40"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold mb-1 text-foreground">
-              {isFa ? "کلید راز امنیتی (HMAC API Secret Key)" : "HMAC API Secret Key"}
-            </label>
-            <input
-              type="password"
-              name="apiSecret"
-              defaultValue=""
-              placeholder="••••••••"
-              className="w-full rounded border border-border bg-surface px-4 py-2 text-sm text-foreground outline-none transition-colors focus:border-accent/40"
-            />
-          </div>
-
-          <div className="flex items-center justify-between pt-2">
-            <button
-              type="submit"
-              disabled={busy === "test_booking_api"}
-              className="px-4 py-2 rounded text-sm font-semibold transition-colors bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
-            >
-              {busy === "test_booking_api"
-                ? (isFa ? "در حال تست و بررسی..." : "Testing Connection...")
-                : (isFa ? "تست و بررسی برقراری ارتباط" : "Test & Verify Gateway")}
-            </button>
-            <span className="text-xs text-muted font-medium">
-              📁 {isFa ? "آدرس سرور (نیاز به تنظیم در .env دارد)" : "Server URL (configure in .env)"}
-            </span>
-          </div>
-        </form>
-      </section>
+      {/* PHP CRM & Booking Integration */}
+      <BookingSettingsCard />
 
       {/* SMS Gateway Integration */}
       <section className="panel rounded p-6">
