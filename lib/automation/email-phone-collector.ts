@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/client";
 import { syncLeadToWampCrm } from "./crm-sync";
 import { SmsIrClient } from "@/lib/services/sms-ir-client";
+import { extractPhoneNumber, normalizeNumerals } from "@/lib/ai/phone-extractor";
 
 /**
  * Validates an email address.
@@ -13,16 +14,13 @@ export function validateEmail(input: string): boolean {
 }
 
 /**
- * Validates Iranian mobile numbers (e.g. 09123456789, +989123456789)
+ * Validates Iranian mobile numbers (e.g. 09123456789, +989123456789, ۰۹۱۲۳۴۵۶۷۸۹)
  * as well as international phone numbers (+1234567890).
  */
 export function validatePhone(input: string): boolean {
   if (!input) return false;
-  const trimmed = input.trim();
-  const iranDomesticRegex = /^09\d{9}$/;
-  const internationalRegex = /^\+?[1-9]\d{7,14}$/;
-
-  return iranDomesticRegex.test(trimmed) || internationalRegex.test(trimmed);
+  const extraction = extractPhoneNumber({ messageText: input });
+  return extraction.detected && Boolean(extraction.phoneNumber);
 }
 
 export interface LeadProcessingResult {
@@ -169,7 +167,8 @@ export async function processLeadStep(params: {
 
   // ── 2. Awaiting Phone Step ─────────────────────────────────────────────────
   if (currentStep === "AWAITING_PHONE") {
-    if (!validatePhone(trimmedMessage)) {
+    const extraction = extractPhoneNumber({ messageText: trimmedMessage });
+    if (!extraction.detected || !extraction.phoneNumber) {
       return {
         handled: true,
         success: false,
@@ -178,7 +177,7 @@ export async function processLeadStep(params: {
       };
     }
 
-    const phone = trimmedMessage;
+    const phone = extraction.phoneNumber;
 
     // Check if OTP verification is requested
     if (requireOtp) {
@@ -355,7 +354,8 @@ export async function processLeadStep(params: {
       };
     }
 
-    if (trimmedMessage !== lead.otpCode) {
+    const cleanOtp = normalizeNumerals(trimmedMessage).replace(/[^0-9]/g, "");
+    if (cleanOtp !== lead.otpCode) {
       await prisma.lead.update({
         where: { id: lead.id },
         data: { otpAttempts: { increment: 1 } },
