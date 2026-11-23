@@ -186,4 +186,217 @@ describe("Visual Flow Builder Engine Tests", () => {
     const selected = selectDmMessageVariation(variationsText);
     expect(["گزینه اول دایرکت", "گزینه دوم دایرکت"]).toContain(selected);
   });
+
+  it("should evaluate condition node correctly using UI schema (ruleType / tagName / textValue)", () => {
+    const tagConditionNode: FlowNode = {
+      id: "cond_tag",
+      type: "condition",
+      title: "Check Tag VIP",
+      position: { x: 0, y: 0 },
+      data: {
+        type: "condition",
+        config: { ruleType: "HAS_TAG", tagName: "vip" } as any,
+      },
+    };
+
+    expect(
+      evaluateConditionNode(tagConditionNode, {
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_1",
+        userId: "user_1",
+        userTags: ["vip", "interested"],
+      })
+    ).toBe(true);
+
+    expect(
+      evaluateConditionNode(tagConditionNode, {
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_1",
+        userId: "user_1",
+        userTags: ["customer"],
+      })
+    ).toBe(false);
+
+    const textConditionNode: FlowNode = {
+      id: "cond_text",
+      type: "condition",
+      title: "Check Text",
+      position: { x: 0, y: 0 },
+      data: {
+        type: "condition",
+        config: { ruleType: "TEXT_CONTAINS", textValue: "خرید فوری" } as any,
+      },
+    };
+
+    expect(
+      evaluateConditionNode(textConditionNode, {
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_1",
+        userId: "user_1",
+        userMessage: "سلام برای خرید فوری مراجعه کردم",
+      })
+    ).toBe(true);
+  });
+
+  it("should correctly traverse send_media voice node and normalize audio", async () => {
+    const mediaGraph: FlowGraph = {
+      nodes: [
+        {
+          id: "trig_media",
+          type: "trigger",
+          title: "Trigger",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "trigger",
+            config: { triggerType: "ALL", keywords: [], matchAnyWord: true, wholeWordMatch: false },
+          },
+        },
+        {
+          id: "media_voice",
+          type: "send_media",
+          title: "Send Voice Note",
+          position: { x: 200, y: 0 },
+          data: {
+            type: "send_media",
+            config: {
+              mediaType: "audio",
+              mediaUrl: "https://insta.digitalelite.ir/uploads/media/voice_sample.mp3",
+              caption: "صدای ارسالی مشاوره",
+            },
+          },
+        },
+      ],
+      edges: [{ id: "e1", sourceNodeId: "trig_media", targetNodeId: "media_voice" }],
+    };
+
+    const results = await executeFlowGraph(mediaGraph, {
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "user_1",
+      userMessage: "هر پیامی",
+    });
+
+    expect(results.length).toBe(2);
+    expect(results[1].nodeType).toBe("send_media");
+    expect(results[1].actionTaken).toBe("SEND_MEDIA_AUDIO");
+    expect(results[1].mediaToSend?.mediaType).toBe("audio");
+    expect(results[1].mediaToSend?.mediaUrl).toBe("https://insta.digitalelite.ir/uploads/media/voice_sample.mp3");
+  });
+
+  it("should advance correctly through nested node connections when resuming at quick_reply", async () => {
+    const nestedGraph: FlowGraph = {
+      nodes: [
+        {
+          id: "trig_1",
+          type: "trigger",
+          title: "Trigger",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "trigger",
+            config: { triggerType: "COMMENT_KEYWORD", keywords: ["شروع"], matchAnyWord: false, wholeWordMatch: true },
+          },
+        },
+        {
+          id: "dm_intro",
+          type: "send_dm",
+          title: "Intro DM",
+          position: { x: 200, y: 0 },
+          data: {
+            type: "send_dm",
+            config: { message: "به دوره دیجیتال الیت خوش آمدید!" },
+          },
+        },
+        {
+          id: "qr_options",
+          type: "quick_reply",
+          title: "Quick Reply Options",
+          position: { x: 400, y: 0 },
+          data: {
+            type: "quick_reply",
+            config: {
+              messageText: "کدام بخش را می‌خواهید؟",
+              quickReplies: [
+                { title: "کاتالوگ", payload: "catalog_choice" },
+                { title: "تماس", payload: "call_choice" },
+              ],
+            } as any,
+          },
+        },
+        {
+          id: "media_catalog",
+          type: "send_media",
+          title: "Send Catalog Audio",
+          position: { x: 600, y: 0 },
+          data: {
+            type: "send_media",
+            config: {
+              mediaType: "audio",
+              mediaUrl: "https://insta.digitalelite.ir/uploads/media/catalog_voice.ogg",
+            },
+          },
+        },
+        {
+          id: "tag_interested",
+          type: "add_tag",
+          title: "Tag User",
+          position: { x: 800, y: 0 },
+          data: {
+            type: "add_tag",
+            config: { tagName: "catalog_downloaded" },
+          },
+        },
+        {
+          id: "dm_final",
+          type: "send_dm",
+          title: "Final DM",
+          position: { x: 1000, y: 0 },
+          data: {
+            type: "send_dm",
+            config: { message: "وویس توضیحات ارسال شد! متشکریم." },
+          },
+        },
+      ],
+      edges: [
+        { id: "e1", sourceNodeId: "trig_1", targetNodeId: "dm_intro" },
+        { id: "e2", sourceNodeId: "dm_intro", targetNodeId: "qr_options" },
+        { id: "e3", sourceNodeId: "qr_options", targetNodeId: "media_catalog", conditionBranch: "catalog_choice" },
+        { id: "e4", sourceNodeId: "media_catalog", targetNodeId: "tag_interested" },
+        { id: "e5", sourceNodeId: "tag_interested", targetNodeId: "dm_final" },
+      ],
+    };
+
+    // Phase 1: User comments "شروع" -> runs until quick_reply and pauses
+    const phase1Results = await executeFlowGraph(nestedGraph, {
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "user_1",
+      userMessage: "شروع",
+    });
+
+    expect(phase1Results.length).toBe(3);
+    expect(phase1Results[0].nodeType).toBe("trigger");
+    expect(phase1Results[1].nodeType).toBe("send_dm");
+    expect(phase1Results[2].nodeType).toBe("quick_reply");
+    expect(phase1Results[2].requiresInput).toBe("FLOW_NODE");
+
+    // Phase 2: User taps "catalog_choice" -> resumes at qr_options and runs all chained downstream nodes
+    const phase2Results = await executeFlowGraph(
+      nestedGraph,
+      {
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_1",
+        userId: "user_1",
+        selectedQuickReplyPayload: "catalog_choice",
+      },
+      "qr_options"
+    );
+
+    expect(phase2Results.length).toBe(3);
+    expect(phase2Results[0].nodeType).toBe("send_media");
+    expect(phase2Results[0].mediaToSend?.mediaUrl).toBe("https://insta.digitalelite.ir/uploads/media/catalog_voice.ogg");
+    expect(phase2Results[1].nodeType).toBe("add_tag");
+    expect(phase2Results[1].tagAction?.tagName).toBe("catalog_downloaded");
+    expect(phase2Results[2].nodeType).toBe("send_dm");
+    expect(phase2Results[2].dmMessageToSend).toBe("وویس توضیحات ارسال شد! متشکریم.");
+  });
 });

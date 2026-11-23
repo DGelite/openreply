@@ -1,7 +1,7 @@
 "use client";
 
 import { FlowNode, FlowNodeType } from "@/lib/flow/types";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 interface NodeInspectorProps {
   selectedNode: FlowNode | null;
@@ -413,36 +413,9 @@ export default function NodeInspector({
           </div>
         )}
 
-        {/* ── 2. SEND_MEDIA ────────────────────────────────────────── */}
+        {/* ── 2. SEND_MEDIA (Upload, Voice Record, Preview) ────────── */}
         {type === "send_media" && (
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-muted block mb-1">نوع رسانه (Media Type)</label>
-              <select
-                value={config.mediaType || "image"}
-                onChange={(e) => updateConfig("mediaType", e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
-              >
-                <option value="image">عکس (Image - JPG / PNG)</option>
-                <option value="video">ویدیو (Video - MP4)</option>
-                <option value="audio">فایل صوتی / وویس (Audio - MP3 / AAC)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted block mb-1">آدرس مستقیم فایل (Public HTTPS URL)</label>
-              <input
-                type="url"
-                placeholder="https://example.com/media/file.jpg"
-                value={config.mediaUrl || ""}
-                onChange={(e) => updateConfig("mediaUrl", e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground font-mono text-left"
-                dir="ltr"
-              />
-              <p className="text-[10px] text-muted mt-1 leading-relaxed">
-                طبق قوانین متا، لینک رسانه باید عمومی و با پروتکل HTTPS باشد.
-              </p>
-            </div>
-          </div>
+          <MediaInspectorSection config={config} updateConfig={updateConfig} />
         )}
 
         {/* ── 3. SEND_CAROUSEL ─────────────────────────────────────── */}
@@ -812,6 +785,43 @@ export default function NodeInspector({
               </div>
             )}
 
+            {/* Confirmation Step (Optional Confirmation in DM) */}
+            <div className="pt-2 border-t border-border space-y-2">
+              <label className="flex items-center gap-2 text-xs cursor-pointer text-foreground">
+                <input
+                  type="checkbox"
+                  checked={Boolean(config.confirmBeforeSave)}
+                  onChange={(e) => updateConfig("confirmBeforeSave", e.target.checked)}
+                  className="accent-accent rounded w-3.5 h-3.5"
+                />
+                <span className="font-medium">دریافت تأییدیه قبل از ثبت نهایی (Confirmation Step)</span>
+              </label>
+              <p className="text-[10px] text-muted leading-relaxed">
+                در صورت فعال بودن، پس از دریافت مقدار از کاربر، یک پیام تایید همراه با دکمه‌های شیشه‌ای «✅ تایید» و «✏️ ویرایش» ارسال می‌شود تا کاربر از صحت اطلاعات ارسالی خود مطمئن شود.
+              </p>
+
+              {config.confirmBeforeSave && (
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-xs font-medium text-muted block">
+                    متن مودبانه پیام تأییدیه (متغیر <code className="text-accent font-mono font-bold">{"{value}"}</code> با مقدار ارسالی کاربر جایگزین می‌شود):
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={
+                      config.confirmMessage !== undefined
+                        ? config.confirmMessage
+                        : config.inputType === "name"
+                        ? "نام شما «{value}» ثبت شد. آیا مورد تایید است؟"
+                        : "شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟"
+                    }
+                    onChange={(e) => updateConfig("confirmMessage", e.target.value)}
+                    placeholder="شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟"
+                    className="w-full rounded-md border border-border bg-background p-2 text-xs text-foreground resize-y leading-relaxed"
+                  />
+                </div>
+              )}
+            </div>
+
             <div className="p-2.5 rounded-lg border border-accent/20 bg-accent/5 text-[11px] text-accent leading-relaxed">
               ✨ <strong>سینک خودکار با CRM:</strong> با دریافت شماره و نام لید در این مرحله، اطلاعات لید در سیستم ثبت شده و به سیستم مدیریت CRM (<span className="font-mono">admin.php</span>) ارسال می‌گردد.
             </div>
@@ -859,6 +869,361 @@ export default function NodeInspector({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Enhanced Media Inspector Section:
+ * Direct File Upload, In-Browser Voice Recording, and Live Media Preview.
+ */
+function MediaInspectorSection({
+  config,
+  updateConfig,
+}: {
+  config: any;
+  updateConfig: (key: string, value: any) => void;
+}) {
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const timerIntervalRef = useRef<any>(null);
+
+  const mediaType = config.mediaType || "image";
+
+  // Handle local file selection and upload
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/media/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "خطا در آپلود فایل");
+      }
+
+      updateConfig("mediaUrl", data.fullUrl || data.url);
+
+      if (file.type.startsWith("audio/")) {
+        updateConfig("mediaType", "audio");
+      } else if (file.type.startsWith("video/")) {
+        updateConfig("mediaType", "video");
+      } else if (file.type.startsWith("image/")) {
+        updateConfig("mediaType", "image");
+      }
+    } catch (err: any) {
+      setUploadError(err.message || "خطا در آپلود فایل");
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // Start voice recording from browser microphone
+  const startRecording = async () => {
+    setUploadError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/ogg")
+        ? "audio/ogg"
+        : "audio/mp4";
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        setRecordedAudioBlob(audioBlob);
+        setRecordedAudioUrl(URL.createObjectURL(audioBlob));
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mediaRecorder.start(250);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.error("Microphone error:", err);
+      setUploadError("دسترسی به میکروفون امکان‌پذیر نیست. لطفاً اجازه دسترسی را در مرورگر فعال کنید.");
+    }
+  };
+
+  // Stop recording
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    }
+  };
+
+  // Upload the recorded voice note
+  const uploadVoiceRecording = async () => {
+    if (!recordedAudioBlob) return;
+    setIsUploading(true);
+    setUploadError(null);
+
+    try {
+      const ext = recordedAudioBlob.type.includes("webm")
+        ? "webm"
+        : recordedAudioBlob.type.includes("ogg")
+        ? "ogg"
+        : "m4a";
+      const file = new File([recordedAudioBlob], `voice-note-${Date.now()}.${ext}`, {
+        type: recordedAudioBlob.type,
+      });
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/media/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "خطا در آپلود ویس");
+      }
+
+      updateConfig("mediaUrl", data.fullUrl || data.url);
+      updateConfig("mediaType", "audio");
+      setRecordedAudioBlob(null);
+      setRecordedAudioUrl(null);
+    } catch (err: any) {
+      setUploadError(err.message || "خطا در ذخیره ویس");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const cancelRecording = () => {
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    setIsRecording(false);
+    setRecordingSeconds(0);
+    setRecordedAudioBlob(null);
+    setRecordedAudioUrl(null);
+  };
+
+  const formatTimer = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, "0");
+    const s = (secs % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="text-xs font-medium text-muted block mb-1">نوع رسانه (Media Type)</label>
+        <select
+          value={mediaType}
+          onChange={(e) => updateConfig("mediaType", e.target.value)}
+          className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
+        >
+          <option value="audio">فایل صوتی / وویس (Voice / Audio - MP3 / M4A / OGG)</option>
+          <option value="image">عکس (Image - JPG / PNG / WEBP)</option>
+          <option value="video">ویدیو (Video - MP4 / MOV)</option>
+        </select>
+      </div>
+
+      {/* Hidden native file input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept={
+          mediaType === "audio"
+            ? "audio/*"
+            : mediaType === "video"
+            ? "video/*"
+            : "image/*"
+        }
+        className="hidden"
+      />
+
+      {/* Upload and Recording Control Panel */}
+      <div className="p-3 rounded-lg border border-border bg-background/50 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-foreground">بارگذاری مستقیم رسانه:</span>
+          {isUploading && (
+            <span className="text-[11px] text-accent animate-pulse font-medium">در حال آپلود...</span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {/* File Picker Button */}
+          <button
+            type="button"
+            disabled={isUploading || isRecording}
+            onClick={() => fileInputRef.current?.click()}
+            className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-accent/10 hover:bg-accent/20 text-accent text-xs font-medium transition-colors border border-accent/20 disabled:opacity-50"
+          >
+            <span>📁</span>
+            <span>انتخاب فایل از سیستم</span>
+          </button>
+
+          {/* Direct Voice Recorder (Visible for Audio) */}
+          {mediaType === "audio" && (
+            <>
+              {!isRecording && !recordedAudioBlob && (
+                <button
+                  type="button"
+                  disabled={isUploading}
+                  onClick={startRecording}
+                  className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-medium transition-colors border border-rose-500/20"
+                >
+                  <span>🎙️</span>
+                  <span>ضبط ویس با میکروفون</span>
+                </button>
+              )}
+
+              {isRecording && (
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  className="flex-1 min-w-[120px] flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-rose-500 text-white text-xs font-bold animate-pulse"
+                >
+                  <span className="w-2.5 h-2.5 rounded-full bg-white"></span>
+                  <span>توقف ضبط ({formatTimer(recordingSeconds)})</span>
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Live Audio Recorded Preview (Before Upload) */}
+        {recordedAudioBlob && recordedAudioUrl && !isRecording && (
+          <div className="p-2.5 rounded-md border border-rose-500/30 bg-rose-500/5 space-y-2">
+            <div className="flex items-center justify-between text-xs text-rose-300">
+              <span className="font-medium">🎧 پیش‌نمایش ویس ضبط‌شده:</span>
+              <span className="font-mono">{formatTimer(recordingSeconds)}</span>
+            </div>
+            <audio src={recordedAudioUrl} controls className="w-full h-8" />
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isUploading}
+                onClick={uploadVoiceRecording}
+                className="flex-1 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors text-center disabled:opacity-50"
+              >
+                {isUploading ? "در حال ارسال..." : "✅ ذخیره و قرار دادن در پیام"}
+              </button>
+              <button
+                type="button"
+                disabled={isUploading}
+                onClick={cancelRecording}
+                className="px-2.5 py-1.5 rounded border border-border hover:bg-background text-muted text-xs transition-colors"
+              >
+                🔄 ضبط مجدد
+              </button>
+            </div>
+          </div>
+        )}
+
+        {uploadError && (
+          <div className="text-[11px] text-rose-400 bg-rose-500/10 p-2 rounded border border-rose-500/20">
+            ⚠️ {uploadError}
+          </div>
+        )}
+      </div>
+
+      {/* Active Media Preview (If mediaUrl is set) */}
+      {config.mediaUrl && (
+        <div className="p-2.5 rounded-lg border border-accent/30 bg-accent/5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-accent">رسانه انتخاب‌شده فعلی:</span>
+            <button
+              type="button"
+              onClick={() => updateConfig("mediaUrl", "")}
+              className="text-[10px] text-rose-400 hover:underline"
+            >
+              حذف رسانه
+            </button>
+          </div>
+
+          {mediaType === "image" && (
+            <img
+              src={config.mediaUrl}
+              alt="Media Preview"
+              className="max-h-36 w-full object-cover rounded-md border border-border"
+            />
+          )}
+
+          {mediaType === "video" && (
+            <video
+              src={config.mediaUrl}
+              controls
+              className="max-h-40 w-full rounded-md border border-border bg-black/40"
+            />
+          )}
+
+          {mediaType === "audio" && (
+            <audio src={config.mediaUrl} controls className="w-full h-9" />
+          )}
+        </div>
+      )}
+
+      {/* Public HTTPS URL (Manual override & inspect) */}
+      <div>
+        <label className="text-xs font-medium text-muted block mb-1">
+          آدرس مستقیم فایل (Public HTTPS URL)
+        </label>
+        <input
+          type="url"
+          placeholder="https://insta.digitalelite.ir/uploads/media/file.mp3"
+          value={config.mediaUrl || ""}
+          onChange={(e) => updateConfig("mediaUrl", e.target.value)}
+          className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground font-mono text-left"
+          dir="ltr"
+        />
+        <p className="text-[10px] text-muted mt-1 leading-relaxed">
+          فایل‌های آپلودشده یا ضبط‌شده به صورت خودکار با لینک امن HTTPS در این فیلد قرار می‌گیرند.
+        </p>
+      </div>
+
+      {/* Caption for image/video */}
+      {mediaType !== "audio" && (
+        <div>
+          <label className="text-xs font-medium text-muted block mb-1">کپشن متن همراه مدیا (اختیاری)</label>
+          <input
+            type="text"
+            placeholder="توضیحات کوتاه تصویر یا ویدیو..."
+            value={config.caption || ""}
+            onChange={(e) => updateConfig("caption", e.target.value)}
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
+          />
+        </div>
+      )}
     </div>
   );
 }

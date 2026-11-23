@@ -244,6 +244,268 @@ export async function processIncomingDirectMessage(
     return;
   }
 
+  // ── 0.16 Check Pending Lead Confirmation (Optional Confirmation Step) ─────
+  const rawMeta = (conversationState.metadata && typeof conversationState.metadata === "object")
+    ? (conversationState.metadata as any)
+    : {};
+  const pendingConf = rawMeta.pendingConfirmation;
+
+  if (pendingConf && conversationState.automationId) {
+    const rawClean = (messageText || "").trim().toLowerCase();
+    const isYes =
+      quickReplyPayload === "CONFIRM_LEAD_YES" ||
+      ["تایید", "تأیید", "بله", "درسته", "صحیحه", "درست است", "صحیح است", "ok", "yes", "y", "✅", "تایید شد"].some(
+        (t) => rawClean === t || rawClean.startsWith(t)
+      );
+
+    const isEdit =
+      quickReplyPayload === "CONFIRM_LEAD_EDIT" ||
+      ["ویرایش", "خیر", "نه", "اشتباهه", "اشتباه است", "غلطه", "تغییر", "no", "edit", "✏️"].some(
+        (t) => rawClean === t || rawClean.startsWith(t)
+      );
+
+    if (isEdit) {
+      const updatedMeta = { ...rawMeta };
+      delete updatedMeta.pendingConfirmation;
+      await prisma.conversationState.update({
+        where: { id: conversationState.id },
+        data: { metadata: updatedMeta },
+      });
+
+      const editPrompt =
+        pendingConf.type === "name"
+          ? "لطفاً نام و نام خانوادگی صحیح خود را مجدداً وارد فرمایید:"
+          : "لطفاً شماره همراه صحیح خود را به صورت کامل (مثال: 09123456789) وارد فرمایید:";
+      await sendDirectMessage(accessToken, instagramAccountId, userId, editPrompt);
+      return;
+    }
+
+    if (isYes) {
+      const confirmedValue = pendingConf.value;
+      const updatedMeta = { ...rawMeta };
+      delete updatedMeta.pendingConfirmation;
+
+      const activeAutomation = await prisma.automation.findUnique({
+        where: { id: conversationState.automationId },
+      });
+
+      if (
+        activeAutomation &&
+        activeAutomation.flowGraph &&
+        typeof activeAutomation.flowGraph === "object"
+      ) {
+        const graph = activeAutomation.flowGraph as unknown as FlowGraph;
+        const currentNode = graph.nodes?.find(
+          (n) => n.id === pendingConf.nodeId || n.id === conversationState.activeNodeId
+        );
+        const config = (currentNode?.data as any)?.config || {};
+
+        if (pendingConf.type === "phone") {
+          await prisma.conversationState.update({
+            where: { id: conversationState.id },
+            data: {
+              extractedPhone: confirmedValue,
+              phoneConfidence: 1.0,
+              phoneOwner: "SELF",
+              phoneRaw: confirmedValue,
+              phoneBuffer: null,
+              phoneBufferExpiresAt: null,
+              conversationStatus: "LEAD_CAPTURED",
+              metadata: updatedMeta,
+            },
+          });
+
+          await prisma.lead.upsert({
+            where: { id: `lead_${instagramAccountId}_${userId}` },
+            create: {
+              id: `lead_${instagramAccountId}_${userId}`,
+              workspaceId: account.workspaceId,
+              instagramAccountId,
+              userId,
+              username,
+              phone: confirmedValue,
+              phoneConfidence: 1.0,
+              phoneOwner: "SELF",
+              phoneRaw: confirmedValue,
+              phoneVerified: true,
+              provider: (account.primaryProvider || "META") as any,
+              crmSyncStatus: "PENDING",
+            },
+            update: {
+              phone: confirmedValue,
+              phoneConfidence: 1.0,
+              phoneOwner: "SELF",
+              phoneRaw: confirmedValue,
+              username: username ?? undefined,
+              provider: (account.primaryProvider || "META") as any,
+            },
+          });
+
+          void syncLeadToWampCrm({
+            leadId: `lead_${instagramAccountId}_${userId}`,
+            phone: confirmedValue,
+            username,
+            igsid: userId,
+            instagramAccountId,
+            provider: (account.primaryProvider || "META") as any,
+            lead_source: "openreply-confirmed-flow",
+          });
+
+          if (config.requireOtp) {
+            const leadResult = await processLeadStep({
+              workspaceId: account.workspaceId,
+              instagramAccountId,
+              userId,
+              username,
+              userMessage: confirmedValue,
+              currentStep: "AWAITING_PHONE",
+              automationId: activeAutomation.id,
+              provider: (account.primaryProvider || "META") as any,
+              requireOtp: true,
+            });
+
+            if (leadResult.replyMessage) {
+              await sendDirectMessage(accessToken, instagramAccountId, userId, leadResult.replyMessage);
+            }
+            return;
+          }
+
+          const nextEdge = graph.edges?.find((e) => e.sourceNodeId === currentNode?.id);
+          if (nextEdge?.targetNodeId) {
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { activeNodeId: nextEdge.targetNodeId },
+            });
+
+            const userTags = await getLeadTags(account.workspaceId, userId);
+            const graphResults = await executeFlowGraph(
+              graph,
+              {
+                workspaceId: account.workspaceId,
+                instagramAccountId: account.instagramId,
+                userId,
+                username,
+                userMessage: messageText,
+                userTags,
+              },
+              nextEdge.targetNodeId
+            );
+
+            await handleFlowExecutionResults(
+              graphResults,
+              activeAutomation,
+              account,
+              accessToken,
+              userId,
+              username,
+              {
+                sendDirectMessage,
+                sendDirectMessageWithLinkButton,
+                sendDirectMediaMessage,
+                sendDirectGenericTemplate,
+                sendDirectQuickReplies,
+                sendDirectMessageWithMultipleButtons,
+              }
+            );
+            return;
+          } else {
+            const successMsg =
+              config.successMessage ||
+              "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { step: "COMPLETED" },
+            });
+            await sendDirectMessage(accessToken, instagramAccountId, userId, successMsg);
+            return;
+          }
+        } else if (pendingConf.type === "name" || pendingConf.type === "text") {
+          await prisma.conversationState.update({
+            where: { id: conversationState.id },
+            data: { metadata: updatedMeta },
+          });
+
+          await prisma.lead.upsert({
+            where: { id: `lead_${instagramAccountId}_${userId}` },
+            create: {
+              id: `lead_${instagramAccountId}_${userId}`,
+              workspaceId: account.workspaceId,
+              instagramAccountId,
+              userId,
+              username,
+              name: confirmedValue,
+              provider: (account.primaryProvider || "META") as any,
+              crmSyncStatus: "PENDING",
+            },
+            update: {
+              name: confirmedValue,
+              username: username ?? undefined,
+            },
+          });
+
+          void syncLeadToWampCrm({
+            leadId: `lead_${instagramAccountId}_${userId}`,
+            full_name: confirmedValue,
+            username,
+            igsid: userId,
+            instagramAccountId,
+            provider: (account.primaryProvider || "META") as any,
+            lead_source: "openreply-confirmed-flow-name",
+          });
+
+          const nextEdge = graph.edges?.find((e) => e.sourceNodeId === currentNode?.id);
+          if (nextEdge?.targetNodeId) {
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { activeNodeId: nextEdge.targetNodeId },
+            });
+
+            const userTags = await getLeadTags(account.workspaceId, userId);
+            const graphResults = await executeFlowGraph(
+              graph,
+              {
+                workspaceId: account.workspaceId,
+                instagramAccountId: account.instagramId,
+                userId,
+                username,
+                userMessage: messageText,
+                userTags,
+              },
+              nextEdge.targetNodeId
+            );
+
+            await handleFlowExecutionResults(
+              graphResults,
+              activeAutomation,
+              account,
+              accessToken,
+              userId,
+              username,
+              {
+                sendDirectMessage,
+                sendDirectMessageWithLinkButton,
+                sendDirectMediaMessage,
+                sendDirectGenericTemplate,
+                sendDirectQuickReplies,
+                sendDirectMessageWithMultipleButtons,
+              }
+            );
+            return;
+          } else {
+            const successMsg =
+              config.successMessage || "اطلاعات شما با موفقیت ثبت شد. متشکریم! 🙏";
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { step: "COMPLETED" },
+            });
+            await sendDirectMessage(accessToken, instagramAccountId, userId, successMsg);
+            return;
+          }
+        }
+      }
+    }
+  }
+
   // ── 0.2 Intelligent Phone Extraction & CRM Ingestion ──────────────────────
   const isBufferValid = conversationState.phoneBufferExpiresAt
     ? conversationState.phoneBufferExpiresAt.getTime() > Date.now()
@@ -346,6 +608,44 @@ export async function processIncomingDirectMessage(
 
         if (currentNode?.type === "collect_input") {
           const config = (currentNode.data as any)?.config || {};
+
+          // Check if confirmation step is requested before finalizing lead
+          if (config.confirmBeforeSave) {
+            const existingMeta =
+              conversationState.metadata && typeof conversationState.metadata === "object"
+                ? (conversationState.metadata as any)
+                : {};
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: {
+                metadata: {
+                  ...existingMeta,
+                  pendingConfirmation: {
+                    type: "phone",
+                    value: phoneRes.phoneNumber,
+                    nodeId: currentNode.id,
+                  },
+                },
+              },
+            });
+
+            const template =
+              config.confirmMessage ||
+              "شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟";
+            const confirmMsg = template.replace(/{value}/g, phoneRes.phoneNumber);
+
+            await sendDirectQuickReplies(
+              accessToken,
+              instagramAccountId,
+              userId,
+              confirmMsg,
+              [
+                { content_type: "text", title: "✅ تایید", payload: "CONFIRM_LEAD_YES" },
+                { content_type: "text", title: "✏️ ویرایش", payload: "CONFIRM_LEAD_EDIT" },
+              ]
+            );
+            return;
+          }
 
           // Check if OTP verification is requested
           if (config.requireOtp) {
@@ -507,6 +807,44 @@ export async function processIncomingDirectMessage(
           await sendDirectMessage(accessToken, instagramAccountId, userId, validationMsg);
           return;
         } else if (inputType === "name" || inputType === "text") {
+          // If confirmation step is enabled, ask for confirmation BEFORE saving to CRM
+          if (config.confirmBeforeSave) {
+            const existingMeta =
+              conversationState.metadata && typeof conversationState.metadata === "object"
+                ? (conversationState.metadata as any)
+                : {};
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: {
+                metadata: {
+                  ...existingMeta,
+                  pendingConfirmation: {
+                    type: "name",
+                    value: messageText.trim(),
+                    nodeId: currentNode.id,
+                  },
+                },
+              },
+            });
+
+            const template =
+              config.confirmMessage ||
+              "نام و نام خانوادگی شما «{value}» ثبت شد. آیا مورد تایید است؟";
+            const confirmMsg = template.replace(/{value}/g, messageText.trim());
+
+            await sendDirectQuickReplies(
+              accessToken,
+              instagramAccountId,
+              userId,
+              confirmMsg,
+              [
+                { content_type: "text", title: "✅ تایید", payload: "CONFIRM_LEAD_YES" },
+                { content_type: "text", title: "✏️ ویرایش", payload: "CONFIRM_LEAD_EDIT" },
+              ]
+            );
+            return;
+          }
+
           await prisma.lead.upsert({
             where: { id: `lead_${instagramAccountId}_${userId}` },
             create: {
@@ -986,10 +1324,12 @@ async function handleFlowExecutionResults(
           userId,
           step: step.requiresInput,
           automationId: automation.id,
+          activeNodeId: step.nodeId,
         },
         update: {
           step: step.requiresInput,
           automationId: automation.id,
+          activeNodeId: step.nodeId,
         },
       });
     }

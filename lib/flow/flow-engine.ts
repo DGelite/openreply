@@ -40,27 +40,36 @@ export interface FlowExecutionContext {
 
 /**
  * Evaluates a condition node against the current execution context.
+ * Seamlessly supports both UI schema (ruleType/tagName/textValue) and API schema (variable/value/operator).
  */
 export function evaluateConditionNode(
   node: FlowNode,
   context: FlowExecutionContext
 ): boolean {
   if (node.data.type !== "condition") return false;
-  const { variable, operator, value } = node.data.config;
+  const config = node.data.config as any;
 
-  switch (variable) {
+  const ruleType = config.ruleType || config.variable;
+  const targetTag = (config.tagName || config.value || "").trim().toLowerCase();
+  const textVal = config.textValue || config.value || "";
+
+  switch (ruleType) {
+    case "EMAIL_PROVIDED":
     case "has_email":
       return Boolean(context.hasEmail);
+    case "PHONE_PROVIDED":
     case "has_phone":
       return Boolean(context.hasPhone);
     case "is_following":
       return Boolean(context.isFollowing);
+    case "HAS_TAG":
     case "has_tag":
-      if (!value || !context.userTags) return false;
-      return context.userTags.includes(value.trim().toLowerCase());
+      if (!targetTag || !context.userTags) return false;
+      return context.userTags.some((t) => t.trim().toLowerCase() === targetTag);
+    case "TEXT_CONTAINS":
     case "keyword_match":
-      if (!context.userMessage || !value) return false;
-      return matchKeywords(context.userMessage, [value], true).matched;
+      if (!context.userMessage || !textVal) return false;
+      return matchKeywords(context.userMessage, [textVal], false).matched;
     default:
       return false;
   }
@@ -120,10 +129,29 @@ export async function executeFlowGraph(
     const currentNode = graph.nodes.find((n) => n.id === currentNodeId);
     if (!currentNode) break;
 
+    // Resumption check: If resuming at a quick_reply node because the user tapped a chip or responded
+    if (currentNode.id === startNodeId && currentNode.type === "quick_reply") {
+      let outgoingEdge: FlowEdge | undefined;
+      if (context.selectedQuickReplyPayload) {
+        outgoingEdge = graph.edges.find(
+          (e) =>
+            e.sourceNodeId === currentNode.id &&
+            (e.sourceHandle === context.selectedQuickReplyPayload ||
+              e.conditionBranch === context.selectedQuickReplyPayload)
+        );
+      }
+      if (!outgoingEdge) {
+        outgoingEdge = graph.edges.find((e) => e.sourceNodeId === currentNode.id);
+      }
+      currentNodeId = outgoingEdge?.targetNodeId;
+      continue;
+    }
+
     // 1. Process Send DM Node
     if (currentNode.type === "send_dm" && currentNode.data.type === "send_dm") {
-      const config = currentNode.data.config;
-      const messageText = selectDmMessageVariation(config.message);
+      const config = currentNode.data.config as any;
+      const rawMessage = config.message || config.messageText || "";
+      const messageText = selectDmMessageVariation(rawMessage);
 
       results.push({
         nodeId: currentNode.id,
@@ -140,13 +168,13 @@ export async function executeFlowGraph(
 
     // 2. Process Send Media Node
     else if (currentNode.type === "send_media" && currentNode.data.type === "send_media") {
-      const config = currentNode.data.config;
+      const config = currentNode.data.config as any;
       results.push({
         nodeId: currentNode.id,
         nodeType: "send_media",
-        actionTaken: `SEND_MEDIA_${config.mediaType.toUpperCase()}`,
+        actionTaken: `SEND_MEDIA_${(config.mediaType || "IMAGE").toUpperCase()}`,
         mediaToSend: {
-          mediaType: config.mediaType,
+          mediaType: config.mediaType || "image",
           mediaUrl: config.mediaUrl,
           caption: config.caption,
         },
@@ -155,27 +183,50 @@ export async function executeFlowGraph(
 
     // 3. Process Send Carousel Node
     else if (currentNode.type === "send_carousel" && currentNode.data.type === "send_carousel") {
-      const config = currentNode.data.config;
+      const config = currentNode.data.config as any;
+      const rawCards = config.cards || config.elements || [];
+      const cards: CarouselCard[] = rawCards.map((c: any, idx: number) => ({
+        id: c.id || `card_${idx + 1}`,
+        title: c.title || "",
+        subtitle: c.subtitle || "",
+        imageUrl: c.imageUrl || c.image_url || "",
+        buttons: (c.buttons || []).map((b: any, bIdx: number) => ({
+          id: b.id || `btn_${bIdx + 1}`,
+          type: b.type || "web_url",
+          title: b.title || "مشاهده",
+          url: b.url || "",
+          payload: b.payload,
+        })),
+      }));
+
       results.push({
         nodeId: currentNode.id,
         nodeType: "send_carousel",
         actionTaken: "SEND_CAROUSEL",
         carouselToSend: {
-          cards: config.cards,
+          cards,
         },
       });
     }
 
     // 4. Process Quick Reply Node
     else if (currentNode.type === "quick_reply" && currentNode.data.type === "quick_reply") {
-      const config = currentNode.data.config;
+      const config = currentNode.data.config as any;
+      const text = config.text || config.messageText || "یک گزینه را انتخاب کنید:";
+      const rawChips = config.chips || config.quickReplies || [];
+      const chips: QuickReplyChip[] = rawChips.map((c: any, idx: number) => ({
+        id: c.id || `chip_${idx + 1}`,
+        title: c.title || `گزینه ${idx + 1}`,
+        payload: c.payload || c.title || `choice_${idx + 1}`,
+      }));
+
       results.push({
         nodeId: currentNode.id,
         nodeType: "quick_reply",
         actionTaken: "SEND_QUICK_REPLIES",
         quickRepliesToSend: {
-          text: config.text,
-          chips: config.chips,
+          text,
+          chips,
         },
         requiresInput: "FLOW_NODE",
       });
@@ -186,7 +237,7 @@ export async function executeFlowGraph(
     // 5. Process Condition Node
     else if (currentNode.type === "condition" && currentNode.data.type === "condition") {
       if (
-        currentNode.data.config.variable === "is_following" &&
+        (currentNode.data.config as any).variable === "is_following" &&
         context.isFollowing === undefined
       ) {
         try {
@@ -228,18 +279,25 @@ export async function executeFlowGraph(
 
     // 6. Process Collect Input Node
     else if (currentNode.type === "collect_input" && currentNode.data.type === "collect_input") {
-      const config = currentNode.data.config;
+      const config = currentNode.data.config as any;
       const inputStep = config.inputType === "email" ? "AWAITING_EMAIL" : "AWAITING_PHONE";
+      const prompt =
+        config.promptMessage ||
+        (config.inputType === "email"
+          ? "لطفاً آدرس ایمیل خود را وارد نمایید:"
+          : config.inputType === "name"
+          ? "لطفاً نام و نام خانوادگی خود را وارد نمایید:"
+          : "لطفاً شماره تماس همراه خود را ارسال فرمایید:");
 
       results.push({
         nodeId: currentNode.id,
         nodeType: "collect_input",
         actionTaken: "PROMPT_USER_INPUT",
-        dmMessageToSend: config.promptMessage,
+        dmMessageToSend: prompt,
         requiresInput: inputStep,
       });
 
-      // Stop traversal until user responds with email/phone
+      // Stop traversal until user responds
       break;
     }
 
@@ -272,12 +330,13 @@ export async function executeFlowGraph(
 
     // 9. Process AI Reply Node
     else if (currentNode.type === "ai_reply" && currentNode.data.type === "ai_reply") {
+      const config = currentNode.data.config as any;
       results.push({
         nodeId: currentNode.id,
         nodeType: "ai_reply",
         actionTaken: "DISPATCH_AI_REPLY",
         isAiReply: true,
-        aiInstruction: currentNode.data.config.instruction,
+        aiInstruction: config.instruction || config.prompt,
       });
       // AI node delivers dynamic response and completes turn
       break;
@@ -288,12 +347,13 @@ export async function executeFlowGraph(
       currentNode.type === "handover_to_human" &&
       currentNode.data.type === "handover_to_human"
     ) {
+      const config = currentNode.data.config as any;
       results.push({
         nodeId: currentNode.id,
         nodeType: "handover_to_human",
         actionTaken: "HANDOVER_TO_HUMAN",
         isHumanHandover: true,
-        dmMessageToSend: currentNode.data.config.notificationMessage,
+        dmMessageToSend: config.notificationMessage || config.reason,
       });
       break;
     }
@@ -320,12 +380,23 @@ export async function executeFlowGraph(
 
     // 12. Process Smart Delay Node
     else if (currentNode.type === "smart_delay" && currentNode.data.type === "smart_delay") {
-      const config = currentNode.data.config;
+      const config = currentNode.data.config as any;
+      let delayMinutes = config.delayMinutes;
+      if (!delayMinutes && config.delayAmount) {
+        const unit = config.delayUnit || "minutes";
+        const amount = Number(config.delayAmount) || 5;
+        if (unit === "hours") delayMinutes = amount * 60;
+        else if (unit === "days") delayMinutes = amount * 1440;
+        else if (unit === "seconds") delayMinutes = Math.max(1, Math.ceil(amount / 60));
+        else delayMinutes = amount;
+      }
+      delayMinutes = delayMinutes || 5;
+
       results.push({
         nodeId: currentNode.id,
         nodeType: "smart_delay",
-        actionTaken: `SMART_DELAY_${config.delayMinutes}_MINUTES`,
-        delayMinutes: config.delayMinutes,
+        actionTaken: `SMART_DELAY_${delayMinutes}_MINUTES`,
+        delayMinutes,
       });
     }
 

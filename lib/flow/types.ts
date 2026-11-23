@@ -104,6 +104,8 @@ export interface CollectInputNodeData {
   successMessage?: string;
   validationErrorMessage?: string;
   requireOtp?: boolean;
+  confirmBeforeSave?: boolean;
+  confirmMessage?: string;
 }
 
 export interface AddTagNodeData {
