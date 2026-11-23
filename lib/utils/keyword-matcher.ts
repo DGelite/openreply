@@ -31,6 +31,13 @@ export interface KeywordMatchResult {
 // apply RTL-specific word-boundary logic instead of the broken \b approach.
 const ARABIC_PERSIAN_RANGE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
 
+const PERSIAN_ARABIC_DIGITS: Record<string, string> = {
+  "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+  "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+  "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+  "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+};
+
 /**
  * Normalize Persian and Arabic characters to a unified form.
  * Keeps the text meaningfully searchable while removing irrelevant variation.
@@ -57,7 +64,10 @@ export function normalizePersian(text: string): string {
     .replace(/\u0624/g, "\u0648")
 
     // ── HEH variants (Teh Marbuta, Heh with Yeh above) → HEH ─────────────
-    .replace(/[\u0629\u06C0]/g, "\u0647");
+    .replace(/[\u0629\u06C0]/g, "\u0647")
+
+    // ── Persian & Arabic digits → English ASCII digits 0-9 ─────────────
+    .replace(/[۰-۹٠-٩]/g, (ch) => PERSIAN_ARABIC_DIGITS[ch] || ch);
 }
 
 const FULL_WIDTH_REGEX = /[\uFF01-\uFF5E]/g;

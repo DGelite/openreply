@@ -43,6 +43,12 @@ describe("Persian & Arabic Keyword Matcher — ManyChat-Level Coverage", () => {
       const withMark = "\u200Fسلام\u200E";
       expect(normalizePersian(withMark)).toBe("سلام");
     });
+
+    it("normalizes Persian and Arabic numerals to ASCII digits", () => {
+      expect(normalizePersian("۱۳۲")).toBe("132");
+      expect(normalizePersian("٠١٢٣٤٥٦٧٨٩")).toBe("0123456789");
+      expect(normalizePersian("۰۹۱۲۳۴۵۶۷۸۹")).toBe("09123456789");
+    });
   });
 
   // ── stripSpecialCharacters ─────────────────────────────────────────────────
@@ -86,6 +92,22 @@ describe("Persian & Arabic Keyword Matcher — ManyChat-Level Coverage", () => {
 
     it("matches keyword despite diacritics in user text", () => {
       const result = matchKeywords("مُحَمَّد", ["محمد"], false);
+      expect(result.matched).toBe(true);
+    });
+
+    it("matches Persian numerals comment with ASCII keyword (۱۳۲ vs 132)", () => {
+      const result = matchKeywords("۱۳۲", ["132"], false);
+      expect(result.matched).toBe(true);
+      expect(result.matchedKeyword).toBe("132");
+    });
+
+    it("matches ASCII comment with Persian numerals keyword (132 vs ۱۳۲)", () => {
+      const result = matchKeywords("132", ["۱۳۲"], false);
+      expect(result.matched).toBe(true);
+    });
+
+    it("matches Persian numerals inside a Persian sentence in whole-word mode", () => {
+      const result = matchKeywords("لطفاً ۱۳۲ بفرستید", ["132"], true);
       expect(result.matched).toBe(true);
     });
 
