@@ -156,6 +156,7 @@ export default function NodeInspector({
                 onChange={(e) => updateConfig("triggerType", e.target.value)}
                 className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
               >
+                <option value="ALL">🌐 همه رویدادها (کامنت، دایرکت، استوری، ری‌اکشن)</option>
                 <option value="COMMENT_KEYWORD">کامنت روی پست / ریلز (Comment Keyword)</option>
                 <option value="DIRECT_MESSAGE">ارسال پیام در دایرکت (Direct Message)</option>
                 <option value="STORY_REPLY">پاسخ به استوری (Story Reply)</option>
@@ -793,6 +794,23 @@ export default function NodeInspector({
                 className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
               />
             </div>
+
+            {(!config.inputType || config.inputType === "phone") && (
+              <div className="pt-2 border-t border-border space-y-1.5">
+                <label className="flex items-center gap-2 text-xs cursor-pointer text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.requireOtp)}
+                    onChange={(e) => updateConfig("requireOtp", e.target.checked)}
+                    className="accent-accent rounded w-3.5 h-3.5"
+                  />
+                  <span className="font-medium">ارسال کد تأیید پیامکی (SMS OTP)</span>
+                </label>
+                <p className="text-[10px] text-muted leading-relaxed">
+                  با فعال‌سازی این گزینه، پس از دریافت شماره، کد ۵ رقمی از طریق درگاه sms.ir پیامک شده و برای اعتبارسنجی در دایرکت درخواست می‌شود.
+                </p>
+              </div>
+            )}
 
             <div className="p-2.5 rounded-lg border border-accent/20 bg-accent/5 text-[11px] text-accent leading-relaxed">
               ✨ <strong>سینک خودکار با CRM:</strong> با دریافت شماره و نام لید در این مرحله، اطلاعات لید در سیستم ثبت شده و به سیستم مدیریت CRM (<span className="font-mono">admin.php</span>) ارسال می‌گردد.

@@ -67,10 +67,12 @@ export async function POST(request: Request) {
 
     // Map FlowBuilder triggerType to Automation enum
     const triggerTypeMap: Record<string, string> = {
+      ALL: "COMMENT",
       COMMENT_KEYWORD: "COMMENT",
       DIRECT_MESSAGE: "DIRECT_MESSAGE",
       STORY_REPLY: "STORY_REPLY",
       STORY_MENTION: "STORY_MENTION",
+      STORY_REACTION: "STORY_REACTION",
     };
     const rawTrigger = triggerNode?.data?.config?.triggerType || "COMMENT_KEYWORD";
     const mappedTriggerType = triggerTypeMap[rawTrigger] || "COMMENT";

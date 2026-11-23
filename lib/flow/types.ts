@@ -20,6 +20,7 @@ export type FlowNodeType =
   | "smart_delay";
 
 export type FlowTriggerType =
+  | "ALL"
   | "COMMENT_KEYWORD"
   | "STORY_REPLY"
   | "STORY_MENTION"
@@ -102,6 +103,7 @@ export interface CollectInputNodeData {
   promptMessage: string;
   successMessage?: string;
   validationErrorMessage?: string;
+  requireOtp?: boolean;
 }
 
 export interface AddTagNodeData {

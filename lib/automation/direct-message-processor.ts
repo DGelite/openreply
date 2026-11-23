@@ -239,6 +239,11 @@ export async function processIncomingDirectMessage(
     }
   }
 
+  // ── 0.15 Ignore Empty / Attachment-only messages (e.g. template echoes from Instagram)
+  if (!messageText && !quickReplyPayload) {
+    return;
+  }
+
   // ── 0.2 Intelligent Phone Extraction & CRM Ingestion ──────────────────────
   const isBufferValid = conversationState.phoneBufferExpiresAt
     ? conversationState.phoneBufferExpiresAt.getTime() > Date.now()
@@ -324,6 +329,98 @@ export async function processIncomingDirectMessage(
       );
       return;
     }
+
+    // If conversation is at a FLOW_NODE for collect_input
+    if (conversationState.step === "FLOW_NODE" && conversationState.automationId) {
+      const activeAutomation = await prisma.automation.findUnique({
+        where: { id: conversationState.automationId },
+      });
+
+      if (
+        activeAutomation &&
+        activeAutomation.flowGraph &&
+        typeof activeAutomation.flowGraph === "object"
+      ) {
+        const graph = activeAutomation.flowGraph as unknown as FlowGraph;
+        const currentNode = graph.nodes?.find((n) => n.id === conversationState.activeNodeId);
+
+        if (currentNode?.type === "collect_input") {
+          const config = (currentNode.data as any)?.config || {};
+
+          // Check if OTP verification is requested
+          if (config.requireOtp) {
+            const leadResult = await processLeadStep({
+              workspaceId: account.workspaceId,
+              instagramAccountId,
+              userId,
+              username,
+              userMessage: phoneRes.phoneNumber,
+              currentStep: "AWAITING_PHONE",
+              automationId: activeAutomation.id,
+              provider: (account.primaryProvider || "META") as any,
+              requireOtp: true,
+            });
+
+            if (leadResult.replyMessage) {
+              await sendDirectMessage(accessToken, instagramAccountId, userId, leadResult.replyMessage);
+            }
+            return;
+          }
+
+          // Advance to the next node in the flow, or complete if end of flow
+          const nextEdge = graph.edges?.find((e) => e.sourceNodeId === currentNode.id);
+          if (nextEdge?.targetNodeId) {
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { activeNodeId: nextEdge.targetNodeId },
+            });
+
+            const userTags = await getLeadTags(account.workspaceId, userId);
+            const graphResults = await executeFlowGraph(
+              graph,
+              {
+                workspaceId: account.workspaceId,
+                instagramAccountId: account.instagramId,
+                userId,
+                username,
+                userMessage: messageText,
+                userTags,
+              },
+              nextEdge.targetNodeId
+            );
+
+            await handleFlowExecutionResults(
+              graphResults,
+              activeAutomation,
+              account,
+              accessToken,
+              userId,
+              username,
+              {
+                sendDirectMessage,
+                sendDirectMessageWithLinkButton,
+                sendDirectMediaMessage,
+                sendDirectGenericTemplate,
+                sendDirectQuickReplies,
+                sendDirectMessageWithMultipleButtons,
+              }
+            );
+            return;
+          } else {
+            // End of flow: send success message and complete
+            const successMsg =
+              config.successMessage ||
+              "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { step: "COMPLETED" },
+            });
+            await sendDirectMessage(accessToken, instagramAccountId, userId, successMsg);
+            return;
+          }
+        }
+      }
+    }
   } else if (phoneRes.isPartial && phoneRes.partialBuffer) {
     await prisma.conversationState.update({
       where: { id: conversationState.id },
@@ -395,9 +492,102 @@ export async function processIncomingDirectMessage(
       activeAutomation.flowGraph &&
       typeof activeAutomation.flowGraph === "object"
     ) {
+      const graph = activeAutomation.flowGraph as unknown as FlowGraph;
+      const currentNode = graph.nodes?.find((n) => n.id === conversationState.activeNodeId);
+
+      // If waiting at collect_input node for phone and phone was not detected
+      if (currentNode?.type === "collect_input") {
+        const config = (currentNode.data as any)?.config || {};
+        const inputType = config.inputType || "phone";
+
+        if (inputType === "phone") {
+          const validationMsg =
+            config.validationErrorMessage ||
+            "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:";
+          await sendDirectMessage(accessToken, instagramAccountId, userId, validationMsg);
+          return;
+        } else if (inputType === "name" || inputType === "text") {
+          await prisma.lead.upsert({
+            where: { id: `lead_${instagramAccountId}_${userId}` },
+            create: {
+              id: `lead_${instagramAccountId}_${userId}`,
+              workspaceId: account.workspaceId,
+              instagramAccountId,
+              userId,
+              username,
+              name: messageText.trim(),
+              provider: (account.primaryProvider || "META") as any,
+              crmSyncStatus: "PENDING",
+            },
+            update: {
+              name: messageText.trim(),
+              username: username ?? undefined,
+            },
+          });
+
+          void syncLeadToWampCrm({
+            leadId: `lead_${instagramAccountId}_${userId}`,
+            full_name: messageText.trim(),
+            username,
+            igsid: userId,
+            instagramAccountId,
+            provider: (account.primaryProvider || "META") as any,
+            lead_source: "openreply-flow-name",
+          });
+
+          const nextEdge = graph.edges?.find((e) => e.sourceNodeId === currentNode.id);
+          if (nextEdge?.targetNodeId) {
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { activeNodeId: nextEdge.targetNodeId },
+            });
+
+            const userTags = await getLeadTags(account.workspaceId, userId);
+            const graphResults = await executeFlowGraph(
+              graph,
+              {
+                workspaceId: account.workspaceId,
+                instagramAccountId: account.instagramId,
+                userId,
+                username,
+                userMessage: messageText,
+                userTags,
+              },
+              nextEdge.targetNodeId
+            );
+
+            await handleFlowExecutionResults(
+              graphResults,
+              activeAutomation,
+              account,
+              accessToken,
+              userId,
+              username,
+              {
+                sendDirectMessage,
+                sendDirectMessageWithLinkButton,
+                sendDirectMediaMessage,
+                sendDirectGenericTemplate,
+                sendDirectQuickReplies,
+                sendDirectMessageWithMultipleButtons,
+              }
+            );
+            return;
+          } else {
+            const successMsg = config.successMessage || "اطلاعات شما با موفقیت ثبت شد. متشکریم! 🙏";
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: { step: "COMPLETED" },
+            });
+            await sendDirectMessage(accessToken, instagramAccountId, userId, successMsg);
+            return;
+          }
+        }
+      }
+
       const userTags = await getLeadTags(account.workspaceId, userId);
       const graphResults = await executeFlowGraph(
-        activeAutomation.flowGraph as unknown as FlowGraph,
+        graph,
         {
           workspaceId: account.workspaceId,
           instagramAccountId: account.instagramId,
@@ -448,7 +638,7 @@ export async function processIncomingDirectMessage(
       instagramAccountId: account.id,
       isActive: true,
       triggerType: {
-        in: [triggerType, "FAQ", "GIVEAWAY", "LEAD_MAGNET", "COUPON", "WELCOME", "DIRECT_MESSAGE"],
+        in: [triggerType, "FAQ", "GIVEAWAY", "LEAD_MAGNET", "COUPON", "WELCOME", "DIRECT_MESSAGE", "COMMENT"],
       },
     },
     include: {
@@ -460,7 +650,13 @@ export async function processIncomingDirectMessage(
   });
 
   for (const automation of automations) {
+    const isFlowAllTrigger =
+      (automation.flowGraph as any)?.nodes?.some(
+        (n: any) => n.type === "trigger" && n.data?.config?.triggerType === "ALL"
+      );
+
     const isTriggerMatch =
+      isFlowAllTrigger ||
       automation.triggerType === triggerType ||
       automation.triggerType === "DIRECT_MESSAGE";
 
