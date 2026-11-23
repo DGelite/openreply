@@ -26,25 +26,41 @@ export function verifyBoxApiWebhookSignature(
 
   // 2. Compute expected HMAC
   // Signed payload format: "{timestamp}.{raw_body}"
-  const signedPayload = timestampHeader ? `${timestampHeader}.${rawBody}` : rawBody;
-  const expectedHash = crypto
-    .createHmac('sha256', webhookSecret)
-    .update(signedPayload)
-    .digest('hex');
+  const cleanSignature = signatureHeader.replace(/^sha256=/, '').trim();
+  const candidateSecrets = Array.from(
+    new Set([
+      webhookSecret,
+      webhookSecret.startsWith('whsec_') ? webhookSecret.slice(6) : `whsec_${webhookSecret}`,
+    ])
+  ).filter(Boolean);
 
-  const cleanSignature = signatureHeader.replace(/^sha256=/, '');
+  const signedPayloads = [
+    timestampHeader ? `${timestampHeader}.${rawBody}` : rawBody,
+    rawBody,
+  ];
 
-  try {
-    const expectedBuffer = Buffer.from(expectedHash, 'hex');
-    const signatureBuffer = Buffer.from(cleanSignature, 'hex');
+  for (const secret of candidateSecrets) {
+    for (const payload of signedPayloads) {
+      try {
+        const expectedHash = crypto
+          .createHmac('sha256', secret)
+          .update(payload)
+          .digest('hex');
 
-    if (expectedBuffer.length !== signatureBuffer.length) {
-      return { isValid: false, error: 'Invalid signature length' };
+        const expectedBuffer = Buffer.from(expectedHash, 'hex');
+        const signatureBuffer = Buffer.from(cleanSignature, 'hex');
+
+        if (
+          expectedBuffer.length === signatureBuffer.length &&
+          crypto.timingSafeEqual(expectedBuffer, signatureBuffer)
+        ) {
+          return { isValid: true };
+        }
+      } catch {
+        // continue trying
+      }
     }
-
-    const matches = crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
-    return { isValid: matches, error: matches ? undefined : 'Signature mismatch' };
-  } catch (err: unknown) {
-    return { isValid: false, error: (err as Error)?.message || 'Signature comparison failed' };
   }
+
+  return { isValid: false, error: 'Signature mismatch' };
 }

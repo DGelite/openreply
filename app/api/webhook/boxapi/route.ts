@@ -36,17 +36,38 @@ export async function POST(request: NextRequest) {
   }
 
   const boxAccountId = payload.account_id;
+  const eventId = payload.event_id || request.headers.get('x-boxapi-event-id') || '';
+  const igMatch = typeof eventId === 'string' ? eventId.match(/^client_ig_(\d+)_/) : null;
+  const extractedIgId = igMatch ? igMatch[1] : null;
 
-  // Account lookup
+  // Resilient multi-vector account lookup
   let account = null;
+  const orConditions: any[] = [];
   if (boxAccountId) {
+    orConditions.push({ boxAccountId: boxAccountId });
+    orConditions.push({ instagramId: boxAccountId });
+  }
+  if (extractedIgId) {
+    orConditions.push({ instagramId: extractedIgId });
+    orConditions.push({ boxAccountId: extractedIgId });
+  }
+
+  if (orConditions.length > 0) {
     account = await prisma.instagramAccount.findFirst({
-      where: {
-        OR: [
-          { boxAccountId: boxAccountId },
-          { instagramId: boxAccountId },
-        ],
+      where: { OR: orConditions },
+      select: {
+        id: true,
+        instagramId: true,
+        workspaceId: true,
+        boxWebhookSecret: true,
       },
+    });
+  }
+
+  // Graceful single-provider fallback if account wasn't matched directly
+  if (!account) {
+    account = await prisma.instagramAccount.findFirst({
+      where: { primaryProvider: 'BOXAPI' },
       select: {
         id: true,
         instagramId: true,
@@ -59,10 +80,9 @@ export async function POST(request: NextRequest) {
   const webhookSecret =
     account?.boxWebhookSecret ||
     process.env.BOXAPI_WEBHOOK_SECRET ||
-    process.env.WEBHOOK_VERIFY_TOKEN ||
     '';
 
-  // Signature verification (if secret configured)
+  // Signature verification (only if secret is configured)
   if (webhookSecret && signature) {
     const verification = verifyBoxApiWebhookSignature(
       rawBody,

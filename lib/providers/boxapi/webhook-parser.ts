@@ -75,20 +75,30 @@ export interface ParsedBoxApiPostback {
 
 export function parseBoxApiCommentEvents(payload: unknown): ParsedBoxApiComment[] {
   if (!payload || typeof payload !== 'object') return [];
-  const p = payload as BoxApiRawCommentPayload;
+  const p = payload as any;
 
-  if (p.event_type !== 'comment' || !p.data || !p.data.id) {
+  const isCommentEvent =
+    p.event_type === 'comment' ||
+    p.event_type === 'comments' ||
+    (!p.event_type && (p.media || p.text !== undefined) && p.from);
+
+  if (!isCommentEvent) {
+    return [];
+  }
+
+  const data = p.data || p;
+  if (!data || !data.id) {
     return [];
   }
 
   return [
     {
-      boxAccountId: p.account_id,
-      commentId: String(p.data.id),
-      commentText: p.data.text || '',
-      commenterId: String(p.data.from?.id || 'unknown'),
-      commenterName: p.data.from?.username,
-      mediaId: String(p.data.media?.id || 'unknown'),
+      boxAccountId: p.account_id || '',
+      commentId: String(data.id),
+      commentText: data.text || '',
+      commenterId: String(data.from?.id || 'unknown'),
+      commenterName: data.from?.username,
+      mediaId: String(data.media?.id || 'unknown'),
       eventId: p.event_id,
     },
   ];
@@ -96,28 +106,49 @@ export function parseBoxApiCommentEvents(payload: unknown): ParsedBoxApiComment[
 
 export function parseBoxApiDirectMessageEvents(payload: unknown): ParsedBoxApiDm[] {
   if (!payload || typeof payload !== 'object') return [];
-  const p = payload as BoxApiRawMessagingPayload;
+  const p = payload as any;
 
-  if (p.event_type !== 'messaging' || !p.data || !p.data.message) {
+  const isDmEvent =
+    p.event_type === 'messaging' ||
+    p.event_type === 'message' ||
+    (!p.event_type && (p.message || p.messaging));
+
+  if (!isDmEvent) {
     return [];
   }
 
-  // Skip echo messages (messages sent by the page itself)
-  if (p.data.message.is_echo) {
-    return [];
+  const data = p.data || p;
+
+  if (Array.isArray(data?.messaging)) {
+    return data.messaging
+      .filter((m: any) => m.message && !m.message.is_echo)
+      .map((m: any) => ({
+        boxAccountId: p.account_id || '',
+        userId: String(m.sender?.id || 'unknown'),
+        messageText: m.message.text || '',
+        mid: m.message.mid || `box_mid_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        quickReplyPayload: m.message.quick_reply?.payload,
+        isEcho: Boolean(m.message.is_echo),
+        eventId: p.event_id,
+      }));
   }
 
-  return [
-    {
-      boxAccountId: p.account_id,
-      userId: String(p.data.sender?.id || 'unknown'),
-      messageText: p.data.message.text || '',
-      mid: p.data.message.mid || `box_mid_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-      quickReplyPayload: p.data.message.quick_reply?.payload,
-      isEcho: Boolean(p.data.message.is_echo),
-      eventId: p.event_id,
-    },
-  ];
+  if (data?.message) {
+    if (data.message.is_echo) return [];
+    return [
+      {
+        boxAccountId: p.account_id || '',
+        userId: String(data.sender?.id || 'unknown'),
+        messageText: data.message.text || '',
+        mid: data.message.mid || `box_mid_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        quickReplyPayload: data.message.quick_reply?.payload,
+        isEcho: Boolean(data.message.is_echo),
+        eventId: p.event_id,
+      },
+    ];
+  }
+
+  return [];
 }
 
 export function parseBoxApiPostbackEvents(payload: unknown): ParsedBoxApiPostback[] {
