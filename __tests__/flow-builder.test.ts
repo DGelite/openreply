@@ -131,6 +131,56 @@ describe("Visual Flow Builder Engine Tests", () => {
     expect(results[1].dmMessageToSend).toBe("لطفا ایمیل خود را وارد کنید:");
   });
 
+  it("should halt traversal on collect_input node for phone collection with prompt", async () => {
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: "trig_1",
+          type: "trigger",
+          title: "Trigger",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "trigger",
+            config: {
+              triggerType: "DIRECT_MESSAGE",
+              keywords: ["مشاوره"],
+              matchAnyWord: false,
+              wholeWordMatch: true,
+            },
+          },
+        },
+        {
+          id: "collect_phone",
+          type: "collect_input",
+          title: "Collect Phone",
+          position: { x: 200, y: 0 },
+          data: {
+            type: "collect_input",
+            config: {
+              inputType: "phone",
+              promptMessage: "لطفاً شماره تماس خود را ارسال کنید:",
+              successMessage: "ثبت شد!",
+            },
+          },
+        },
+      ],
+      edges: [{ id: "e1", sourceNodeId: "trig_1", targetNodeId: "collect_phone" }],
+    };
+
+    const results = await executeFlowGraph(graph, {
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "user_1",
+      userMessage: "سلام وقت بخیر برای مشاوره پیام دادم",
+    });
+
+    expect(results.length).toBe(2);
+    expect(results[0].nodeType).toBe("trigger");
+    expect(results[1].nodeType).toBe("collect_input");
+    expect(results[1].requiresInput).toBe("AWAITING_PHONE");
+    expect(results[1].dmMessageToSend).toBe("لطفاً شماره تماس خود را ارسال کنید:");
+  });
+
   it("should rotate A/B testing message variations", () => {
     const variationsText = "گزینه اول دایرکت\n---\nگزینه دوم دایرکت";
     const selected = selectDmMessageVariation(variationsText);

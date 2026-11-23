@@ -98,8 +98,16 @@ function domainNodeToReactFlowNode(n: DomainNode, index: number): Node {
   const t = n.type;
   let previewText = "...";
   const conf = (n.data?.config as any) || {};
-  if (t === "trigger") previewText = conf.triggerType || "شروع فلو";
-  else if (t === "send_dm") previewText = conf.messageText || conf.message || "ارسال پیام متنی";
+  if (t === "trigger") {
+    if (conf.matchAnyWord) {
+      previewText = `${conf.triggerType === "DIRECT_MESSAGE" ? "دایرکت" : "کامنت"}: هر پیامی`;
+    } else if (Array.isArray(conf.keywords) && conf.keywords.length > 0) {
+      previewText = `کلمات: ${conf.keywords.join("، ")}`;
+    } else {
+      previewText = conf.triggerType || "شروع فلو";
+    }
+  }
+  else if (t === "send_dm") previewText = conf.message || conf.messageText || "ارسال پیام متنی";
   else if (t === "send_media") previewText = `${conf.mediaType || "عکس"}: ${conf.mediaUrl ? "تنظیم شده" : "بدون لینک"}`;
   else if (t === "send_carousel") previewText = `${conf.elements?.length || 0} کارت اسلایدر`;
   else if (t === "quick_reply") previewText = conf.messageText || "پاسخ‌های سریع";
@@ -110,7 +118,15 @@ function domainNodeToReactFlowNode(n: DomainNode, index: number): Node {
   else if (t === "ai_reply") previewText = conf.prompt ? "پرامپت هوش مصنوعی فعال" : "پاسخ هوشمند خودکار";
   else if (t === "handover_to_human") previewText = conf.reason || "انتقال به اپراتور";
   else if (t === "smart_delay") previewText = `تاخیر ${conf.delayAmount || conf.delayMinutes || 5} ${conf.delayUnit || "دقیقه"}`;
-  else if (t === "collect_input") previewText = `دریافت ${conf.inputType || "اطلاعات"}`;
+  else if (t === "collect_input") {
+    const inputTypeMap: Record<string, string> = {
+      phone: "شماره همراه",
+      name: "نام",
+      email: "ایمیل",
+      text: "متن",
+    };
+    previewText = `دریافت ${inputTypeMap[conf.inputType] || conf.inputType || "اطلاعات"}${conf.promptMessage ? `: ${conf.promptMessage}` : ""}`;
+  }
   else if (t === "webhook_action") previewText = conf.webhookUrl ? "وب‌هوک فعال" : "بدون آدرس";
 
   return {

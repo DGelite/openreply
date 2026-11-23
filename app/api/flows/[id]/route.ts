@@ -77,14 +77,23 @@ export async function PUT(
         updateData.triggerType = (triggerTypeMap[rawTrigger] || "COMMENT") as any;
         if (tc.keywords !== undefined) updateData.keywords = tc.keywords;
         if (tc.matchAnyPost !== undefined) updateData.matchAnyPost = tc.matchAnyPost;
+        if (tc.postId !== undefined) updateData.postId = tc.postId || null;
         if (tc.matchAnyWord !== undefined) updateData.matchAnyWord = tc.matchAnyWord;
         if (tc.wholeWordMatch !== undefined) updateData.wholeWordMatch = tc.wholeWordMatch;
+        if (tc.publicReplyEnabled !== undefined) updateData.publicReplyEnabled = tc.publicReplyEnabled;
+        if (tc.publicReplyMessage !== undefined) {
+          updateData.publicReplyMessage = tc.publicReplyMessage;
+          updateData.publicReplyMessages = tc.publicReplyMessages || [tc.publicReplyMessage];
+        }
       }
       if (dmNode?.data?.config) {
         const dc = dmNode.data.config;
-        if (dc.message !== undefined) updateData.dmMessage = dc.message;
+        const msg = dc.message !== undefined ? dc.message : dc.messageText;
+        if (msg !== undefined) updateData.dmMessage = msg;
         if (dc.buttonLabel !== undefined) updateData.linkButtonLabel = dc.buttonLabel;
-        if (dc.publicReplyEnabled !== undefined) updateData.publicReplyEnabled = dc.publicReplyEnabled;
+        if (dc.publicReplyEnabled !== undefined && updateData.publicReplyEnabled === undefined) {
+          updateData.publicReplyEnabled = dc.publicReplyEnabled;
+        }
       }
     }
 

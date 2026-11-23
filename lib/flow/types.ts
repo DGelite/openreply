@@ -38,6 +38,10 @@ export interface TriggerNodeData {
   matchAnyPost?: boolean;
   matchAnyWord: boolean;
   wholeWordMatch: boolean;
+  postId?: string;
+  publicReplyEnabled?: boolean;
+  publicReplyMessage?: string;
+  publicReplyMessages?: string[];
 }
 
 export interface FlowButton {
@@ -94,7 +98,7 @@ export interface ConditionNodeData {
 }
 
 export interface CollectInputNodeData {
-  inputType: "email" | "phone" | "text";
+  inputType: "email" | "phone" | "text" | "name";
   promptMessage: string;
   successMessage?: string;
   validationErrorMessage?: string;

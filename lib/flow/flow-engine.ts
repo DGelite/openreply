@@ -87,7 +87,11 @@ export async function executeFlowGraph(
     }
 
     // Check trigger match if user message is provided
-    if (context.userMessage && triggerNode.data.config.triggerType === "COMMENT_KEYWORD") {
+    if (
+      context.userMessage &&
+      (triggerNode.data.config.triggerType === "COMMENT_KEYWORD" ||
+        triggerNode.data.config.triggerType === "DIRECT_MESSAGE")
+    ) {
       const config = triggerNode.data.config;
       const match = config.matchAnyWord
         ? { matched: true, matchedKeyword: null }

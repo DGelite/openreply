@@ -40,6 +40,7 @@ export default function NodeInspector({
   onClose,
 }: NodeInspectorProps) {
   const [dripCampaigns, setDripCampaigns] = useState<any[]>([]);
+  const [newKeyword, setNewKeyword] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -73,7 +74,30 @@ export default function NodeInspector({
     });
   };
 
+  const updateMultipleConfig = (updates: Record<string, any>) => {
+    onUpdateNode({
+      ...selectedNode,
+      data: {
+        ...data,
+        config: {
+          ...(data as any).config,
+          ...updates,
+        },
+      } as any,
+    });
+  };
+
   const config = (data as any).config || {};
+
+  const handleAddKeyword = () => {
+    const trimmed = newKeyword.trim();
+    if (!trimmed) return;
+    const current = Array.isArray(config.keywords) ? config.keywords : [];
+    if (!current.includes(trimmed)) {
+      updateConfig("keywords", [...current, trimmed]);
+    }
+    setNewKeyword("");
+  };
 
   return (
     <div
@@ -121,6 +145,189 @@ export default function NodeInspector({
           />
         </div>
 
+        {/* ── 0. TRIGGER (Event & Keywords) ─────────────────────────── */}
+        {type === "trigger" && (
+          <div className="space-y-4">
+            {/* Trigger Type */}
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">نوع رویداد شروع‌کننده (Trigger)</label>
+              <select
+                value={config.triggerType || "COMMENT_KEYWORD"}
+                onChange={(e) => updateConfig("triggerType", e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
+              >
+                <option value="COMMENT_KEYWORD">کامنت روی پست / ریلز (Comment Keyword)</option>
+                <option value="DIRECT_MESSAGE">ارسال پیام در دایرکت (Direct Message)</option>
+                <option value="STORY_REPLY">پاسخ به استوری (Story Reply)</option>
+                <option value="STORY_MENTION">منشن شدن پیج در استوری (Story Mention)</option>
+                <option value="STORY_REACTION">ری‌اکشن به استوری (Story Reaction)</option>
+                <option value="WELCOME">پیام خوش‌آمدگویی (Welcome Message)</option>
+              </select>
+            </div>
+
+            {/* Post Target (If comment) */}
+            {(!config.triggerType || config.triggerType === "COMMENT_KEYWORD") && (
+              <div className="p-2.5 rounded-lg border border-border bg-background/50 space-y-2">
+                <label className="text-xs font-medium text-foreground block">هدف کامنت</label>
+                <div className="flex items-center gap-4 text-xs">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="triggerPostScope"
+                      checked={config.matchAnyPost !== false}
+                      onChange={() => updateConfig("matchAnyPost", true)}
+                      className="accent-accent"
+                    />
+                    <span>همه پست‌ها و ریلزها</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="triggerPostScope"
+                      checked={config.matchAnyPost === false}
+                      onChange={() => updateConfig("matchAnyPost", false)}
+                      className="accent-accent"
+                    />
+                    <span>پست یا ریلز مشخص</span>
+                  </label>
+                </div>
+
+                {config.matchAnyPost === false && (
+                  <div className="pt-1">
+                    <input
+                      type="text"
+                      placeholder="شناسه رسانه (Media ID) مثلاً 18087850304500002"
+                      value={config.postId || ""}
+                      onChange={(e) => updateConfig("postId", e.target.value)}
+                      className="w-full rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground font-mono text-left"
+                      dir="ltr"
+                    />
+                    <p className="text-[10px] text-muted mt-1">
+                      شناسه پست یا ریلز را وارد کنید تا این فلو فقط برای همان محتوا فعال شود.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Keyword matching mode */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-muted">تنظیم کلمات کلیدی محرک</label>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer text-muted hover:text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.matchAnyWord)}
+                    onChange={(e) => updateConfig("matchAnyWord", e.target.checked)}
+                    className="accent-accent rounded"
+                  />
+                  <span>هر کلمه‌ای (Match Any Word)</span>
+                </label>
+              </div>
+
+              {!config.matchAnyWord && (
+                <div className="space-y-2">
+                  {/* Add keyword input */}
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="کلمه کلیدی جدید (مثلا: قیمت، ۱۲، خرید)..."
+                      value={newKeyword}
+                      onChange={(e) => setNewKeyword(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddKeyword();
+                        }
+                      }}
+                      className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted/60"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddKeyword}
+                      className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:bg-accent/90 shrink-0"
+                    >
+                      افزودن
+                    </button>
+                  </div>
+
+                  {/* Keywords tags list */}
+                  <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2 rounded-md border border-border bg-background/50">
+                    {(config.keywords || []).length === 0 ? (
+                      <span className="text-[11px] text-muted">هیچ کلمه کلیدی ثبت نشده است.</span>
+                    ) : (
+                      (config.keywords || []).map((kw: string, kwIdx: number) => (
+                        <span
+                          key={kwIdx}
+                          className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-accent/15 text-accent border border-accent/30 font-medium"
+                        >
+                          {kw}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = (config.keywords || []).filter((_: any, i: number) => i !== kwIdx);
+                              updateConfig("keywords", updated);
+                            }}
+                            className="hover:text-rose-400 font-bold ml-0.5"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Whole word match */}
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer text-muted hover:text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={config.wholeWordMatch !== false}
+                      onChange={(e) => updateConfig("wholeWordMatch", e.target.checked)}
+                      className="accent-accent rounded"
+                    />
+                    <span>تطابق دقیق کلمه (Whole Word Match)</span>
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {/* Public reply for comments */}
+            {(!config.triggerType || config.triggerType === "COMMENT_KEYWORD") && (
+              <div className="pt-2 border-t border-border space-y-2">
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.publicReplyEnabled)}
+                    onChange={(e) => updateConfig("publicReplyEnabled", e.target.checked)}
+                    className="accent-accent rounded"
+                  />
+                  <span className="font-medium">ارسال پاسخ عمومی زیر کامنت (Public Reply)</span>
+                </label>
+
+                {config.publicReplyEnabled && (
+                  <div>
+                    <textarea
+                      rows={2}
+                      value={config.publicReplyMessage || (config.publicReplyMessages?.[0] || "")}
+                      onChange={(e) => {
+                        updateMultipleConfig({
+                          publicReplyMessage: e.target.value,
+                          publicReplyMessages: [e.target.value],
+                        });
+                      }}
+                      placeholder="مثال: دایرکت‌تون رو چک کنید براتون ارسال شد 🙏"
+                      className="w-full rounded-md border border-border bg-background p-2 text-xs text-foreground resize-y"
+                    />
+                    <p className="text-[10px] text-muted mt-0.5">
+                      این پیام در پاسخ به همان کامنت زیر پست ارسال می‌شود.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── 1. SEND_DM (Text DM) ─────────────────────────────────── */}
         {type === "send_dm" && (
           <div className="space-y-3">
@@ -128,8 +335,13 @@ export default function NodeInspector({
               <label className="text-xs font-medium text-muted block mb-1">متن پیام دایرکت</label>
               <textarea
                 rows={4}
-                value={config.messageText || ""}
-                onChange={(e) => updateConfig("messageText", e.target.value)}
+                value={config.messageText || config.message || ""}
+                onChange={(e) => {
+                  updateMultipleConfig({
+                    message: e.target.value,
+                    messageText: e.target.value,
+                  });
+                }}
                 placeholder="سلام! از پیام شما متشکریم..."
                 className="w-full rounded-md border border-border bg-background p-2.5 text-xs text-foreground focus:outline-none focus:border-accent resize-y"
               />
@@ -522,6 +734,109 @@ export default function NodeInspector({
                   <option value="days">روز</option>
                 </select>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── 11. COLLECT_INPUT (Lead Capture: Phone, Name, Email) ─── */}
+        {type === "collect_input" && (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">نوع داده دریافتی (Input Type)</label>
+              <select
+                value={config.inputType || "phone"}
+                onChange={(e) => updateConfig("inputType", e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
+              >
+                <option value="phone">شماره همراه (Phone Number - فرمت ایران ۰۹)</option>
+                <option value="name">نام و نام خانوادگی (Full Name)</option>
+                <option value="email">آدرس ایمیل (Email Address)</option>
+                <option value="text">متن دلخواه (Custom Text)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">متن پیام درخواست در دایرکت</label>
+              <textarea
+                rows={3}
+                value={config.promptMessage || ""}
+                onChange={(e) => updateConfig("promptMessage", e.target.value)}
+                placeholder={
+                  config.inputType === "email"
+                    ? "لطفاً آدرس ایمیل خود را ارسال فرمایید:"
+                    : config.inputType === "name"
+                    ? "لطفاً نام و نام خانوادگی خود را ارسال فرمایید:"
+                    : "لطفاً شماره تماس همراه خود را ارسال کنید:"
+                }
+                className="w-full rounded-md border border-border bg-background p-2.5 text-xs text-foreground resize-y"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">پیام تایید پس از دریافت صحیح (Success Message)</label>
+              <input
+                type="text"
+                value={config.successMessage || ""}
+                onChange={(e) => updateConfig("successMessage", e.target.value)}
+                placeholder="اطلاعات شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏"
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">پیام خطا در صورت فرمت اشتباه</label>
+              <input
+                type="text"
+                value={config.validationErrorMessage || ""}
+                onChange={(e) => updateConfig("validationErrorMessage", e.target.value)}
+                placeholder="فرمت وارد شده معتبر نیست. لطفاً مجدداً ارسال کنید."
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
+              />
+            </div>
+
+            <div className="p-2.5 rounded-lg border border-accent/20 bg-accent/5 text-[11px] text-accent leading-relaxed">
+              ✨ <strong>سینک خودکار با CRM:</strong> با دریافت شماره و نام لید در این مرحله، اطلاعات لید در سیستم ثبت شده و به سیستم مدیریت CRM (<span className="font-mono">admin.php</span>) ارسال می‌گردد.
+            </div>
+          </div>
+        )}
+
+        {/* ── 12. WEBHOOK_ACTION ───────────────────────────────────── */}
+        {type === "webhook_action" && (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">آدرس وب‌هوک (Webhook URL)</label>
+              <input
+                type="url"
+                placeholder="https://your-crm.com/api/webhook"
+                value={config.webhookUrl || ""}
+                onChange={(e) => updateConfig("webhookUrl", e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground font-mono text-left"
+                dir="ltr"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">متد ارسال (HTTP Method)</label>
+              <select
+                value={config.httpMethod || "POST"}
+                onChange={(e) => updateConfig("httpMethod", e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground font-mono"
+              >
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">پیلود سفارشی (JSON - اختیاری)</label>
+              <textarea
+                rows={3}
+                value={config.customPayloadJson || ""}
+                onChange={(e) => updateConfig("customPayloadJson", e.target.value)}
+                placeholder='{"source": "instagram_flow"}'
+                className="w-full rounded-md border border-border bg-background p-2.5 text-xs text-foreground font-mono text-left resize-y"
+                dir="ltr"
+              />
             </div>
           </div>
         )}
