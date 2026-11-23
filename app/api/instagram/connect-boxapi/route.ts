@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
       username: rawUsername,
       boxAccountId: rawBoxAccountId,
       boxApiKey: rawBoxApiKey,
+      boxApiBaseUrl: rawBoxApiBaseUrl,
       boxApiToken: rawBoxApiToken,
       boxWebhookSecret: rawBoxWebhookSecret,
     } = body;
@@ -43,6 +44,7 @@ export async function POST(request: NextRequest) {
     const username = (rawUsername || "").trim().replace(/^@/, "").toLowerCase();
     const boxAccountId = (rawBoxAccountId || "").trim();
     const boxApiKey = (rawBoxApiKey || "").trim();
+    const boxApiBaseUrl = (rawBoxApiBaseUrl || "").trim() || process.env.BOXAPI_BASE_URL || "https://api.sendbox.chat/api/v1";
     const boxApiToken = (rawBoxApiToken || "").trim();
     const boxWebhookSecret = (rawBoxWebhookSecret || "").trim();
 
@@ -73,7 +75,7 @@ export async function POST(request: NextRequest) {
       const testClient = new BoxApiClient({
         apiKey: boxApiKey,
         accountId: boxAccountId,
-        baseUrl: process.env.BOXAPI_BASE_URL || "https://boxapi.ir",
+        baseUrl: boxApiBaseUrl,
         timeoutMs: 6000,
       });
 
@@ -109,6 +111,7 @@ export async function POST(request: NextRequest) {
           orchestrationMode: "BOXAPI_PRIMARY",
           boxAccountId,
           boxApiKey,
+          boxApiBaseUrl,
           ...(boxApiToken ? { boxApiToken } : {}),
           ...(boxWebhookSecret ? { boxWebhookSecret } : {}),
           boxConnectedAt: new Date(),
@@ -127,6 +130,7 @@ export async function POST(request: NextRequest) {
           orchestrationMode: "BOXAPI_PRIMARY",
           boxAccountId,
           boxApiKey,
+          boxApiBaseUrl,
           boxApiToken: boxApiToken || null,
           boxWebhookSecret: boxWebhookSecret || null,
           boxConnectedAt: new Date(),

@@ -26,18 +26,20 @@ export class BoxApiProvider implements InstagramProvider {
         boxApiKey: true,
         boxApiToken: true,
         boxAccountId: true,
+        boxApiBaseUrl: true,
       },
     });
 
     const apiKey = account?.boxApiKey || process.env.BOXAPI_API_KEY || '';
     const apiToken = account?.boxApiToken || process.env.BOXAPI_API_TOKEN || apiKey;
     const boxAccountId = account?.boxAccountId || process.env.BOXAPI_ACCOUNT_ID;
+    const baseUrl = account?.boxApiBaseUrl || process.env.BOXAPI_BASE_URL || 'https://api.sendbox.chat/api/v1';
 
     return new BoxApiClient({
       apiKey,
       apiToken,
       accountId: boxAccountId,
-      baseUrl: process.env.BOXAPI_BASE_URL || 'https://boxapi.ir',
+      baseUrl,
       timeoutMs: Number(process.env.BOXAPI_TIMEOUT_MS) || 10000,
     });
   }

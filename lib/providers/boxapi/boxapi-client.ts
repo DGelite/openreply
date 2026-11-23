@@ -38,7 +38,7 @@ export class BoxApiClient {
   private readonly timeoutMs: number;
 
   constructor(config: BoxApiConfig) {
-    this.baseUrl = config.baseUrl?.replace(/\/$/, '') || 'https://boxapi.ir';
+    this.baseUrl = config.baseUrl?.replace(/\/$/, '') || process.env.BOXAPI_BASE_URL || 'https://api.sendbox.chat/api/v1';
     this.dataBaseUrl = `${this.baseUrl}/api/instagram`;
     this.apiKey = config.apiKey;
     this.apiToken = config.apiToken;

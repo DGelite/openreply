@@ -66,6 +66,7 @@ export async function GET(req: NextRequest) {
       primaryProvider: account.primaryProvider,
       backupProvider: account.backupProvider,
       boxAccountId: account.boxAccountId,
+      boxApiBaseUrl: account.boxApiBaseUrl || process.env.BOXAPI_BASE_URL || "https://api.sendbox.chat/api/v1",
       hasBoxApiKey: Boolean(account.boxApiKey),
       hasBoxApiToken: Boolean(account.boxApiToken),
       hasBoxWebhookSecret: Boolean(account.boxWebhookSecret),
@@ -113,6 +114,7 @@ export async function POST(req: NextRequest) {
             backupProvider: body.backupProvider || null,
             boxAccountId: body.boxAccountId.trim(),
             boxApiKey: body.boxApiKey.trim(),
+            boxApiBaseUrl: body.boxApiBaseUrl ? body.boxApiBaseUrl.trim() : null,
             boxApiToken: body.boxApiToken ? body.boxApiToken.trim() : null,
             boxWebhookSecret: body.boxWebhookSecret ? body.boxWebhookSecret.trim() : null,
             boxConnectedAt: new Date(),
@@ -171,6 +173,7 @@ export async function POST(req: NextRequest) {
       backupProvider,
       boxAccountId,
       boxApiKey,
+      boxApiBaseUrl,
       boxApiToken,
       boxWebhookSecret,
     } = body;
@@ -188,6 +191,9 @@ export async function POST(req: NextRequest) {
     }
     if (boxAccountId !== undefined) {
       updateData.boxAccountId = boxAccountId ? boxAccountId.trim() : null;
+    }
+    if (boxApiBaseUrl !== undefined) {
+      updateData.boxApiBaseUrl = boxApiBaseUrl ? boxApiBaseUrl.trim() : null;
     }
     if (boxApiKey && boxApiKey.trim() !== "") {
       updateData.boxApiKey = boxApiKey.trim();

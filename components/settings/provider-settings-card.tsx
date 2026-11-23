@@ -11,6 +11,7 @@ interface ProviderConfig {
   primaryProvider: "META" | "BOXAPI";
   backupProvider: "META" | "BOXAPI" | null;
   boxAccountId: string | null;
+  boxApiBaseUrl?: string | null;
   hasBoxApiKey: boolean;
   hasBoxApiToken: boolean;
   hasBoxWebhookSecret: boolean;
@@ -44,6 +45,7 @@ export function ProviderSettingsCard({ accountId }: { accountId?: string }) {
   const [backupProvider, setBackupProvider] = useState<"META" | "BOXAPI" | "NONE">("BOXAPI");
   const [boxAccountId, setBoxAccountId] = useState("");
   const [boxApiKey, setBoxApiKey] = useState("");
+  const [boxApiBaseUrl, setBoxApiBaseUrl] = useState("https://api.sendbox.chat/api/v1");
   const [boxApiToken, setBoxApiToken] = useState("");
   const [boxWebhookSecret, setBoxWebhookSecret] = useState("");
 
@@ -59,6 +61,7 @@ export function ProviderSettingsCard({ accountId }: { accountId?: string }) {
         setPrimaryProvider(d.primaryProvider);
         setBackupProvider(d.backupProvider || "NONE");
         setBoxAccountId(d.boxAccountId || "");
+        setBoxApiBaseUrl(d.boxApiBaseUrl || "https://api.sendbox.chat/api/v1");
       }
     } catch (err) {
       console.error("Error fetching provider config:", err);
@@ -88,6 +91,7 @@ export function ProviderSettingsCard({ accountId }: { accountId?: string }) {
           backupProvider: backupProvider === "NONE" ? null : backupProvider,
           boxAccountId,
           boxApiKey: boxApiKey.trim() || undefined,
+          boxApiBaseUrl: boxApiBaseUrl.trim() || undefined,
           boxApiToken: boxApiToken.trim() || undefined,
           boxWebhookSecret: boxWebhookSecret.trim() || undefined,
         }),
@@ -361,6 +365,24 @@ export function ProviderSettingsCard({ accountId }: { accountId?: string }) {
                 placeholder={config.hasBoxApiKey ? "•••••••••••••••• (ذخیره شده)" : "کلید API باکس را وارد کنید"}
                 className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
               />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium mb-1 text-foreground">
+                {isFa ? "آدرس پایه وب‌سرویس BoxAPI (Base URL)" : "BoxAPI Base URL"}
+              </label>
+              <input
+                type="text"
+                value={boxApiBaseUrl}
+                onChange={(e) => setBoxApiBaseUrl(e.target.value)}
+                placeholder="e.g. https://api.sendbox.chat/api/v1"
+                className="w-full rounded border border-border bg-surface px-3 py-2 text-xs font-mono text-foreground outline-none focus:border-accent"
+              />
+              <p className="text-[11px] text-muted mt-1">
+                {isFa
+                  ? "آدرس سرور API ارائه شده در پنل BoxAPI (پیش‌فرض: https://api.sendbox.chat/api/v1) - کاملاً قابل تنظیم و ویرایش"
+                  : "API Base URL from your BoxAPI dashboard (default: https://api.sendbox.chat/api/v1)"}
+              </p>
             </div>
 
             <div>

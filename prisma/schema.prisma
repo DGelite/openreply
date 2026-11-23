@@ -170,6 +170,7 @@ model InstagramAccount {
   boxApiToken         String?                   @db.Text
   boxAccountId        String?
   boxApiKey           String?                   @db.Text
+  boxApiBaseUrl       String?                   @db.Text
   boxWebhookSecret    String?                   @db.Text
   boxConnectedAt      DateTime?
   metaConnectedAt     DateTime?

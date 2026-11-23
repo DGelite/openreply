@@ -77,6 +77,7 @@ export default function SettingsPage() {
   const [boxUsername, setBoxUsername] = useState("");
   const [boxAccountId, setBoxAccountId] = useState("");
   const [boxApiKey, setBoxApiKey] = useState("");
+  const [boxApiBaseUrl, setBoxApiBaseUrl] = useState("https://api.sendbox.chat/api/v1");
   const [boxApiToken, setBoxApiToken] = useState("");
   const [boxWebhookSecret, setBoxWebhookSecret] = useState("");
   const [showAdvancedBox, setShowAdvancedBox] = useState(false);
@@ -99,6 +100,7 @@ export default function SettingsPage() {
           username: boxUsername,
           boxAccountId,
           boxApiKey,
+          boxApiBaseUrl: boxApiBaseUrl.trim() || undefined,
           boxApiToken: boxApiToken.trim() || undefined,
           boxWebhookSecret: boxWebhookSecret.trim() || undefined,
         }),
@@ -453,6 +455,24 @@ export default function SettingsPage() {
                       placeholder="کلید API دریافت شده از پنل boxapi.ir"
                       className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      {isFa ? "آدرس پایه وب‌سرویس BoxAPI (Base URL)" : "BoxAPI Base URL"}
+                    </label>
+                    <input
+                      type="text"
+                      value={boxApiBaseUrl}
+                      onChange={(e) => setBoxApiBaseUrl(e.target.value)}
+                      placeholder="e.g. https://api.sendbox.chat/api/v1"
+                      className="w-full rounded border border-border bg-surface px-3 py-2 text-xs font-mono text-foreground outline-none focus:border-accent"
+                    />
+                    <p className="text-[11px] text-muted mt-1">
+                      {isFa
+                        ? "آدرس سرور API متصل به داشبورد BoxAPI (پیش‌فرض: https://api.sendbox.chat/api/v1)"
+                        : "API Base URL from your BoxAPI dashboard (default: https://api.sendbox.chat/api/v1)"}
+                    </p>
                   </div>
 
                   <div className="pt-1">
