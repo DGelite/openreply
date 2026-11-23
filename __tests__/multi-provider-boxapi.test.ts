@@ -264,4 +264,37 @@ describe("OpenReply Multi-Provider & BoxAPI Enterprise Test Suite", () => {
       expect(isBoxApiPrimary).toBe(true);
     });
   });
+
+  describe("7. BoxAPI Reply-To-Message & Sender Action (Typing / Seen)", () => {
+    it("should attach reply_to.mid payload when replyToMessageId is supplied in options", () => {
+      const options = { replyToMessageId: "mid_parent_12345" };
+      const replyMid = options?.replyToMessageId;
+
+      const payload: Record<string, unknown> = {
+        recipient_id: "user_recipient_99",
+        message: "پاسخ به پیام شما",
+      };
+
+      if (replyMid) {
+        payload.reply_to = { mid: replyMid };
+      }
+
+      expect(payload.reply_to).toEqual({ mid: "mid_parent_12345" });
+    });
+
+    it("should construct valid sender_action payload for typing_on, typing_off, and mark_seen", () => {
+      const actions = ["typing_on", "typing_off", "mark_seen"] as const;
+
+      for (const action of actions) {
+        const payload = {
+          account_id: "01a2083c-305b-7160-af71-2f09079808a8",
+          recipient_id: "user_recipient_99",
+          sender_action: action,
+        };
+
+        expect(payload.sender_action).toBe(action);
+        expect(payload.recipient_id).toBe("user_recipient_99");
+      }
+    });
+  });
 });

@@ -8,6 +8,7 @@ import {
   ProviderOperationResult,
   ProviderSendResult,
   ProviderType,
+  SenderActionType,
 } from '../contracts/provider-types';
 import { BoxApiClient, BoxApiConfig } from './boxapi-client';
 import { prisma } from '@/lib/db/client';
@@ -100,6 +101,11 @@ export class BoxApiProvider implements InstagramProvider {
       payload.quick_replies = options.quick_replies;
     }
 
+    const replyMid = options?.replyToMessageId || options?.reply_to?.mid;
+    if (replyMid) {
+      payload.reply_to = { mid: replyMid };
+    }
+
     const start = Date.now();
     try {
       const response = await client.officialPost<{ message_id?: string; recipient_id?: string }>(
@@ -137,10 +143,15 @@ export class BoxApiProvider implements InstagramProvider {
     options?: MessageOptions
   ): Promise<ProviderSendResult> {
     const client = await this.getClient(accountId);
-    const payload = {
+    const payload: Record<string, unknown> = {
       recipient_id: recipientId,
       elements,
     };
+
+    const replyMid = options?.replyToMessageId || options?.reply_to?.mid;
+    if (replyMid) {
+      payload.reply_to = { mid: replyMid };
+    }
 
     try {
       const response = await client.officialPost<{ message_id?: string }>(
@@ -190,7 +201,12 @@ export class BoxApiProvider implements InstagramProvider {
 
       if (type === 'image') {
         endpoint = '/service/actions/send_image';
-        payload = { recipient_id: recipientId, url };
+        payload = { recipient_id: recipientId, images: [url] };
+      }
+
+      const replyMid = options?.replyToMessageId || options?.reply_to?.mid;
+      if (replyMid) {
+        payload.reply_to = { mid: replyMid };
       }
 
       const response = await client.officialPost<{ message_id?: string }>(endpoint, payload);
@@ -406,6 +422,45 @@ export class BoxApiProvider implements InstagramProvider {
       };
     } catch {
       return { id: userId };
+    }
+  }
+
+  /**
+   * Manage sender action (typing_on, typing_off, mark_seen)
+   */
+  public async sendSenderAction(
+    accountId: string,
+    recipientId: string,
+    action: SenderActionType
+  ): Promise<ProviderOperationResult> {
+    const client = await this.getClient(accountId);
+
+    try {
+      const response = await client.officialPost<{ success?: boolean }>(
+        '/service/actions/sender_action',
+        {
+          recipient_id: recipientId,
+          sender_action: action,
+        }
+      );
+
+      return {
+        success: true,
+        provider: 'BOXAPI',
+        operation: `sender_action:${action}`,
+        targetId: recipientId,
+        statusCode: response.status_code || 200,
+        rawResponse: response,
+      };
+    } catch (err: unknown) {
+      return {
+        success: false,
+        provider: 'BOXAPI',
+        operation: `sender_action:${action}`,
+        targetId: recipientId,
+        error: (err as Error)?.message,
+        rawResponse: err,
+      };
     }
   }
 

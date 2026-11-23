@@ -7,6 +7,7 @@ import {
   ProviderOperationResult,
   ProviderSendResult,
   ProviderType,
+  SenderActionType,
 } from './provider-types';
 
 /**
@@ -105,4 +106,13 @@ export interface InstagramProvider {
   testConnection(
     accountId: string
   ): Promise<ProviderHealthCheckResult>;
+
+  /**
+   * Send sender action indicator (typing_on, typing_off, mark_seen)
+   */
+  sendSenderAction?(
+    accountId: string,
+    recipientId: string,
+    action: SenderActionType
+  ): Promise<ProviderOperationResult>;
 }

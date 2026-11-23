@@ -8,6 +8,7 @@ import {
   ProviderOperationResult,
   ProviderSendResult,
   ProviderType,
+  SenderActionType,
 } from '../contracts/provider-types';
 import * as metaClient from '@/lib/meta/client';
 import { safeDecryptToken } from '@/lib/meta/oauth';
@@ -457,6 +458,49 @@ export class MetaProvider implements InstagramProvider {
       };
     } catch {
       return { id: userId };
+    }
+  }
+
+  public async sendSenderAction(
+    accountId: string,
+    recipientId: string,
+    action: SenderActionType
+  ): Promise<ProviderOperationResult> {
+    const account = await this.getAccount(accountId);
+    try {
+      const response = await metaClient.metaFetch(
+        `https://graph.facebook.com/v25.0/${account.instagramId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${account.decryptedToken}`,
+          },
+          body: JSON.stringify({
+            recipient: { id: recipientId },
+            sender_action: action,
+          }),
+        }
+      );
+
+      const json = await response.json().catch(() => ({}));
+      return {
+        success: response.ok,
+        provider: 'META',
+        operation: `sender_action:${action}`,
+        targetId: recipientId,
+        statusCode: response.status,
+        rawResponse: json,
+      };
+    } catch (err: unknown) {
+      return {
+        success: false,
+        provider: 'META',
+        operation: `sender_action:${action}`,
+        targetId: recipientId,
+        error: (err as Error)?.message,
+        rawResponse: err,
+      };
     }
   }
 

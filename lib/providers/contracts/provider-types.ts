@@ -29,11 +29,15 @@ export interface ProviderGenericElement {
   buttons?: ProviderButton[];
 }
 
+export type SenderActionType = 'typing_on' | 'typing_off' | 'mark_seen';
+
 export interface MessageOptions {
   buttons?: ProviderButton[];
   quick_replies?: ProviderQuickReply[];
   tag?: string;
   idempotencyKey?: string;
+  replyToMessageId?: string;
+  reply_to?: { mid: string };
 }
 
 export interface ProviderSendResult {

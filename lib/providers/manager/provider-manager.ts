@@ -9,6 +9,7 @@ import {
   ProviderOperationResult,
   ProviderSendResult,
   ProviderType,
+  SenderActionType,
 } from '../contracts/provider-types';
 import { MetaProvider } from '../meta/meta-provider';
 import { BoxApiProvider } from '../boxapi/boxapi-provider';
@@ -327,6 +328,38 @@ export class ProviderManager implements InstagramProvider {
     return this.executeWithFailover(accountId, 'getUserProfile', p =>
       p.getUserProfile(accountId, userId)
     );
+  }
+
+  public async sendSenderAction(
+    accountId: string,
+    recipientId: string,
+    action: SenderActionType
+  ): Promise<ProviderOperationResult> {
+    return this.executeWithFailover(accountId, `sender_action:${action}`, async (p) => {
+      if (p.sendSenderAction) {
+        return p.sendSenderAction(accountId, recipientId, action);
+      }
+      return {
+        success: true,
+        provider: p.providerType,
+        operation: `sender_action:${action}`,
+      };
+    });
+  }
+
+  public async markSeen(
+    accountId: string,
+    recipientId: string
+  ): Promise<ProviderOperationResult> {
+    return this.sendSenderAction(accountId, recipientId, 'mark_seen');
+  }
+
+  public async setTyping(
+    accountId: string,
+    recipientId: string,
+    typing: boolean
+  ): Promise<ProviderOperationResult> {
+    return this.sendSenderAction(accountId, recipientId, typing ? 'typing_on' : 'typing_off');
   }
 
   public async testConnection(accountId: string): Promise<ProviderHealthCheckResult> {
