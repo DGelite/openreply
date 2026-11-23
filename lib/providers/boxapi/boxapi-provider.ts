@@ -23,6 +23,8 @@ export class BoxApiProvider implements InstagramProvider {
       where: { id: accountId },
       select: {
         id: true,
+        username: true,
+        instagramId: true,
         boxApiKey: true,
         boxApiToken: true,
         boxAccountId: true,
@@ -32,8 +34,42 @@ export class BoxApiProvider implements InstagramProvider {
 
     const apiKey = account?.boxApiKey || process.env.BOXAPI_API_KEY || '';
     const apiToken = account?.boxApiToken || process.env.BOXAPI_API_TOKEN || apiKey;
-    const boxAccountId = account?.boxAccountId || process.env.BOXAPI_ACCOUNT_ID;
+    let boxAccountId = account?.boxAccountId || process.env.BOXAPI_ACCOUNT_ID;
     const baseUrl = account?.boxApiBaseUrl || process.env.BOXAPI_BASE_URL || 'https://api.sendbox.chat/api/v1';
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    // Self-healing: If boxAccountId is missing or not a valid UUID, resolve it via /service/info
+    if (apiKey && (!boxAccountId || !uuidRegex.test(boxAccountId))) {
+      try {
+        const tempClient = new BoxApiClient({ apiKey, apiToken, baseUrl, timeoutMs: 5000 });
+        const info = await tempClient.officialGet<{
+          accounts?: Array<{ id: string; username?: string; instagram_user_id?: string }>;
+        }>('/service/info');
+
+        const accounts = info.data?.accounts || [];
+        const matched =
+          accounts.find(
+            (a) =>
+              (account?.username && a.username?.toLowerCase() === account.username.toLowerCase()) ||
+              (account?.instagramId && a.instagram_user_id === account.instagramId)
+          ) || accounts[0];
+
+        if (matched?.id && uuidRegex.test(matched.id)) {
+          boxAccountId = matched.id;
+          if (account?.id) {
+            prisma.instagramAccount
+              .update({
+                where: { id: account.id },
+                data: { boxAccountId: matched.id },
+              })
+              .catch(() => {});
+          }
+        }
+      } catch (e) {
+        console.warn('[BoxApiProvider] Auto-resolving boxAccountId failed:', e);
+      }
+    }
 
     return new BoxApiClient({
       apiKey,

@@ -189,8 +189,37 @@ export async function POST(req: NextRequest) {
     if (backupProvider !== undefined) {
       updateData.backupProvider = backupProvider || null;
     }
-    if (boxAccountId !== undefined) {
-      updateData.boxAccountId = boxAccountId ? boxAccountId.trim() : null;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let finalBoxAccountId = boxAccountId !== undefined ? (boxAccountId ? boxAccountId.trim() : null) : undefined;
+
+    // Auto-resolve valid UUID if user passed numeric Instagram ID or invalid format
+    if (finalBoxAccountId && !uuidRegex.test(finalBoxAccountId)) {
+      const activeKey = (boxApiKey && boxApiKey.trim()) || account.boxApiKey;
+      const activeBase = (boxApiBaseUrl && boxApiBaseUrl.trim()) || account.boxApiBaseUrl || "https://api.sendbox.chat/api/v1";
+      if (activeKey) {
+        try {
+          const testClient = new BoxApiClient({ apiKey: activeKey, baseUrl: activeBase, timeoutMs: 5000 });
+          const infoRes = await testClient.officialGet<{
+            accounts?: Array<{ id: string; username?: string; instagram_user_id?: string }>;
+          }>("/service/info");
+          const accounts = infoRes.data?.accounts || [];
+          const matched =
+            accounts.find(
+              (a) =>
+                (account.username && a.username?.toLowerCase() === account.username.toLowerCase()) ||
+                (account.instagramId && a.instagram_user_id === account.instagramId)
+            ) || accounts[0];
+          if (matched?.id && uuidRegex.test(matched.id)) {
+            finalBoxAccountId = matched.id;
+          }
+        } catch (e) {
+          console.warn("[SettingsProvider] Auto-resolve UUID failed:", e);
+        }
+      }
+    }
+
+    if (finalBoxAccountId !== undefined) {
+      updateData.boxAccountId = finalBoxAccountId;
     }
     if (boxApiBaseUrl !== undefined) {
       updateData.boxApiBaseUrl = boxApiBaseUrl ? boxApiBaseUrl.trim() : null;

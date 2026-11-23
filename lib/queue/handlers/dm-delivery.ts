@@ -135,13 +135,15 @@ export async function deliverPrivateReply(params: {
     Boolean(automation.openingDmMessage) &&
     Boolean(automation.openingDmButtonLabel);
 
+  let sendResult: any = null;
+
   if (useOpeningDm) {
     const openingText = renderMessageWithTracking({
       message: automation.openingDmMessage as string,
       commenterName,
       trackedLinks: [],
     });
-    await providerManager.privateReply(
+    sendResult = await providerManager.privateReply(
       accountId,
       commentId,
       openingText,
@@ -162,7 +164,7 @@ export async function deliverPrivateReply(params: {
         message: selectedMessage,
         commenterName,
       }) || "Here's your link:";
-    await providerManager.privateReply(
+    sendResult = await providerManager.privateReply(
       accountId,
       commentId,
       bodyText,
@@ -183,7 +185,24 @@ export async function deliverPrivateReply(params: {
       commenterName,
       trackedLinks: automation.trackedLinks,
     });
-    await providerManager.privateReply(accountId, commentId, dmMessage);
+    sendResult = await providerManager.privateReply(accountId, commentId, dmMessage);
+  }
+
+  if (sendResult && !sendResult.success) {
+    console.error(`[DmDelivery] Private reply failed for comment ${commentId}:`, sendResult.error);
+    await prisma.dmLog.update({
+      where: {
+        automationId_commentId: {
+          automationId: automation.id,
+          commentId,
+        },
+      },
+      data: {
+        status: "FAILED",
+        errorMessage: sendResult.error || "Provider failed to send private reply",
+      },
+    });
+    return;
   }
 
   await prisma.dmLog.update({
