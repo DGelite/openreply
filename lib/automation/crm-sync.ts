@@ -19,6 +19,8 @@ export interface SyncLeadPayload {
   instagramAccountId?: string;
   provider?: "META" | "BOXAPI";
   externalUserId?: string;
+  auto_verify_and_book?: boolean;
+  appointment_time?: string;
   custom_data?: Record<string, unknown>;
 }
 
@@ -44,6 +46,8 @@ export async function syncLeadToWampCrm(payload: SyncLeadPayload): Promise<boole
       instagram_handle: payload.username,
       lead_source: payload.lead_source || "openreply-instagram",
       igsid: payload.igsid,
+      auto_verify_and_book: payload.auto_verify_and_book,
+      appointment_time: payload.appointment_time,
       custom_data: {
         ...payload.custom_data,
         provider: payload.provider || "META",

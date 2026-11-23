@@ -45,7 +45,15 @@ const createAutomationSchema = z
       .nullable(),
     isActive: z.boolean().optional().default(true),
     wholeWordMatch: z.boolean().optional().default(true),
+    collectName: z.boolean().optional().default(false),
+    leadPromptName: z.string().max(1000).optional().nullable(),
+    collectPhone: z.boolean().optional().default(false),
+    leadPromptPhone: z.string().max(1000).optional().nullable(),
+    leadSuccessMessage: z.string().max(1000).optional().nullable(),
     collectPhoneSkipOtp: z.boolean().optional().default(false),
+    autoVerifyAndBook: z.boolean().optional().default(false),
+    confirmBeforeSave: z.boolean().optional().default(false),
+    confirmMessage: z.string().max(1000).optional().nullable(),
   })
   // A campaign must target a specific post, any post, or the next reel.
   .refine(
@@ -86,7 +94,15 @@ const updateAutomationSchema = z.object({
   isActive: z.boolean().optional(),
   wholeWordMatch: z.boolean().optional(),
   reportShareEnabled: z.boolean().optional(),
+  collectName: z.boolean().optional(),
+  leadPromptName: z.string().max(1000).optional().nullable(),
+  collectPhone: z.boolean().optional(),
+  leadPromptPhone: z.string().max(1000).optional().nullable(),
+  leadSuccessMessage: z.string().max(1000).optional().nullable(),
   collectPhoneSkipOtp: z.boolean().optional(),
+  autoVerifyAndBook: z.boolean().optional(),
+  confirmBeforeSave: z.boolean().optional(),
+  confirmMessage: z.string().max(1000).optional().nullable(),
   // Empty string clears the tracked link; a URL updates/creates it; undefined
   // leaves it unchanged.
   trackedDestinationUrl: z
@@ -382,7 +398,15 @@ export async function POST(request: NextRequest) {
         : null,
       isActive: parsed.data.isActive,
       wholeWordMatch: parsed.data.wholeWordMatch,
+      collectName: parsed.data.collectName,
+      leadPromptName: parsed.data.leadPromptName || null,
+      collectPhone: parsed.data.collectPhone,
+      leadPromptPhone: parsed.data.leadPromptPhone || null,
+      leadSuccessMessage: parsed.data.leadSuccessMessage || null,
       collectPhoneSkipOtp: parsed.data.collectPhoneSkipOtp,
+      autoVerifyAndBook: parsed.data.autoVerifyAndBook,
+      confirmBeforeSave: parsed.data.confirmBeforeSave,
+      confirmMessage: parsed.data.confirmMessage || null,
       workspaceId,
       instagramAccountId: instagramAccount.id,
       reportShareSlug: generateReportShareSlug(),

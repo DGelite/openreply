@@ -822,6 +822,22 @@ export default function NodeInspector({
               )}
             </div>
 
+            {/* Instant Verified Booking Toggle (admin.php Reservation Engine) */}
+            <div className="pt-2 border-t border-border space-y-2">
+              <label className="flex items-center gap-2 text-xs cursor-pointer text-foreground">
+                <input
+                  type="checkbox"
+                  checked={Boolean(config.autoVerifyAndBook)}
+                  onChange={(e) => updateConfig("autoVerifyAndBook", e.target.checked)}
+                  className="accent-emerald-500 rounded w-3.5 h-3.5"
+                />
+                <span className="font-medium text-emerald-400">⚡ تایید خودکار و ثبت رزرو نوبت مستقیم (Instant Verified Booking)</span>
+              </label>
+              <p className="text-[10px] text-muted leading-relaxed">
+                با فعال‌سازی این گزینه، شماره و مشخصات کاربر بدون نیاز به پیامک، مستقیماً در پنل مدیریت (admin.php) با وضعیت «تأیید شده» ذخیره شده و اولین نوبت خالی رزرو به صورت خودکار به وی اختصاص می‌یابد.
+              </p>
+            </div>
+
             <div className="p-2.5 rounded-lg border border-accent/20 bg-accent/5 text-[11px] text-accent leading-relaxed">
               ✨ <strong>سینک خودکار با CRM:</strong> با دریافت شماره و نام لید در این مرحله، اطلاعات لید در سیستم ثبت شده و به سیستم مدیریت CRM (<span className="font-mono">admin.php</span>) ارسال می‌گردد.
             </div>

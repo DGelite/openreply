@@ -18,6 +18,11 @@ export interface AutomationWithAccountAndLinks {
   publicReplyMessages: any;
   flowGraph: any;
   isActive: boolean;
+  collectName?: boolean;
+  collectPhone?: boolean;
+  leadPromptName?: string | null;
+  leadPromptPhone?: string | null;
+  autoVerifyAndBook?: boolean;
   createdAt: Date;
   updatedAt: Date;
   instagramAccount: {

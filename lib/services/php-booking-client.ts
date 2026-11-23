@@ -60,6 +60,8 @@ export interface SyncLeadDirectParams {
   instagram_handle?: string;
   lead_source?: string;
   igsid?: string;
+  auto_verify_and_book?: boolean;
+  appointment_time?: string;
   custom_data?: Record<string, unknown>;
 }
 

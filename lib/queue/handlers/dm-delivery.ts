@@ -218,6 +218,36 @@ export async function deliverPrivateReply(params: {
       errorMessage: null,
     },
   });
+
+  if (!useOpeningDm && (automation.collectName || automation.collectPhone)) {
+    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
+    await prisma.conversationState.upsert({
+      where: {
+        instagramAccountId_userId: {
+          instagramAccountId: automation.instagramAccount.instagramId,
+          userId: commenterId,
+        },
+      },
+      create: {
+        workspaceId: automation.workspaceId,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId: commenterId,
+        step: initialStep,
+        automationId: automation.id,
+      },
+      update: {
+        step: initialStep,
+        automationId: automation.id,
+      },
+    });
+
+    const promptText =
+      initialStep === "AWAITING_NAME"
+        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+
+    await providerManager.sendTextMessage(accountId, commenterId, promptText);
+  }
 }
 
 export async function deliverPostbackReveal(params: {
@@ -285,4 +315,34 @@ export async function deliverPostbackReveal(params: {
     },
     update: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
   });
+
+  if (automation.collectName || automation.collectPhone) {
+    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
+    await prisma.conversationState.upsert({
+      where: {
+        instagramAccountId_userId: {
+          instagramAccountId: automation.instagramAccount.instagramId,
+          userId,
+        },
+      },
+      create: {
+        workspaceId: automation.workspaceId,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId,
+        step: initialStep,
+        automationId: automation.id,
+      },
+      update: {
+        step: initialStep,
+        automationId: automation.id,
+      },
+    });
+
+    const promptText =
+      initialStep === "AWAITING_NAME"
+        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+
+    await providerManager.sendTextMessage(accountId, userId, promptText);
+  }
 }

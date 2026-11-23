@@ -26,9 +26,9 @@ export function validatePhone(input: string): boolean {
 export interface LeadProcessingResult {
   handled: boolean;
   success: boolean;
-  nextStep?: "COMPLETED" | "AWAITING_PHONE" | "AWAITING_EMAIL" | "AWAITING_OTP";
+  nextStep?: "COMPLETED" | "AWAITING_NAME" | "AWAITING_PHONE" | "AWAITING_EMAIL" | "AWAITING_OTP";
   replyMessage: string;
-  capturedData?: { email?: string; phone?: string };
+  capturedData?: { email?: string; phone?: string; name?: string };
 }
 
 /**
@@ -40,7 +40,7 @@ export async function processLeadStep(params: {
   userId: string; // IGSID or provider-scoped ID
   username?: string;
   userMessage: string;
-  currentStep: "AWAITING_EMAIL" | "AWAITING_PHONE" | "AWAITING_OTP";
+  currentStep: "AWAITING_NAME" | "AWAITING_EMAIL" | "AWAITING_PHONE" | "AWAITING_OTP";
   automationId?: string;
   promptPhoneAfterEmail?: boolean;
   requireOtp?: boolean;
@@ -62,6 +62,117 @@ export async function processLeadStep(params: {
   } = params;
 
   const trimmedMessage = userMessage.trim();
+
+  // ── 0. Awaiting Name Step ──────────────────────────────────────────────────
+  if (currentStep === "AWAITING_NAME") {
+    if (!trimmedMessage || trimmedMessage.length < 2) {
+      return {
+        handled: true,
+        success: false,
+        replyMessage: "لطفاً نام و نام خانوادگی خود را به صورت کامل وارد نمایید:",
+      };
+    }
+
+    const name = trimmedMessage;
+
+    // Save lead name
+    await prisma.lead.upsert({
+      where: { id: `lead_${instagramAccountId}_${userId}` },
+      create: {
+        id: `lead_${instagramAccountId}_${userId}`,
+        workspaceId,
+        instagramAccountId,
+        userId,
+        username,
+        name,
+        sourceAutomationId: automationId,
+        provider,
+        externalUserId,
+        crmSyncStatus: "PENDING",
+      },
+      update: {
+        name,
+        username: username ?? undefined,
+        sourceAutomationId: automationId ?? undefined,
+        provider,
+        externalUserId: externalUserId ?? undefined,
+      },
+    });
+
+    const automation = automationId
+      ? await prisma.automation.findUnique({ where: { id: automationId } })
+      : null;
+
+    if (automation?.collectPhone) {
+      await prisma.conversationState.upsert({
+        where: {
+          instagramAccountId_userId: { instagramAccountId, userId },
+        },
+        create: {
+          workspaceId,
+          instagramAccountId,
+          userId,
+          step: "AWAITING_PHONE",
+          automationId,
+        },
+        update: {
+          step: "AWAITING_PHONE",
+          automationId,
+        },
+      });
+
+      const phonePrompt =
+        automation.leadPromptPhone ||
+        `ممنون ${name} عزیز! 🙏\nلطفاً شماره همراه خود را وارد کنید:`;
+
+      return {
+        handled: true,
+        success: true,
+        nextStep: "AWAITING_PHONE",
+        replyMessage: phonePrompt,
+        capturedData: { name },
+      };
+    }
+
+    // Name-only collection complete!
+    await prisma.conversationState.upsert({
+      where: {
+        instagramAccountId_userId: { instagramAccountId, userId },
+      },
+      create: {
+        workspaceId,
+        instagramAccountId,
+        userId,
+        step: "COMPLETED",
+        automationId,
+      },
+      update: {
+        step: "COMPLETED",
+      },
+    });
+
+    void syncLeadToWampCrm({
+      leadId: `lead_${instagramAccountId}_${userId}`,
+      full_name: name,
+      username,
+      igsid: userId,
+      instagramAccountId,
+      provider,
+      externalUserId,
+      lead_source: `campaign:${automation?.name || automationId}`,
+      auto_verify_and_book: Boolean(automation?.autoVerifyAndBook),
+    });
+
+    return {
+      handled: true,
+      success: true,
+      nextStep: "COMPLETED",
+      replyMessage:
+        automation?.leadSuccessMessage ||
+        `ممنون ${name} عزیز! اطلاعات شما با موفقیت ثبت شد. 🙏`,
+      capturedData: { name },
+    };
+  }
 
   // ── 1. Awaiting Email Step ─────────────────────────────────────────────────
   if (currentStep === "AWAITING_EMAIL") {
@@ -259,6 +370,56 @@ export async function processLeadStep(params: {
       };
     }
 
+    const automation = automationId
+      ? await prisma.automation.findUnique({ where: { id: automationId } })
+      : null;
+
+    const leadRecord = await prisma.lead.findUnique({
+      where: { id: `lead_${instagramAccountId}_${userId}` },
+    });
+
+    if (automation?.confirmBeforeSave) {
+      await prisma.conversationState.upsert({
+        where: {
+          instagramAccountId_userId: { instagramAccountId, userId },
+        },
+        create: {
+          workspaceId,
+          instagramAccountId,
+          userId,
+          step: "AWAITING_PHONE",
+          automationId,
+          metadata: {
+            pendingConfirmation: {
+              type: "phone",
+              value: phone,
+              automationId,
+            },
+          },
+        },
+        update: {
+          metadata: {
+            pendingConfirmation: {
+              type: "phone",
+              value: phone,
+              automationId,
+            },
+          },
+        },
+      });
+
+      const confirmText = automation.confirmMessage
+        ? automation.confirmMessage.replace("{phone}", phone)
+        : `شماره شما ${phone} است، آیا تایید می‌کنید؟`;
+
+      return {
+        handled: true,
+        success: true,
+        replyMessage: confirmText,
+        capturedData: { phone },
+      };
+    }
+
     // Direct phone save without OTP
     await prisma.lead.upsert({
       where: { id: `lead_${instagramAccountId}_${userId}` },
@@ -288,12 +449,14 @@ export async function processLeadStep(params: {
     void syncLeadToWampCrm({
       leadId: `lead_${instagramAccountId}_${userId}`,
       phone,
+      full_name: leadRecord?.name || undefined,
       username,
       igsid: userId,
       instagramAccountId,
       provider,
       externalUserId,
-      lead_source: "openreply-phone-collector",
+      lead_source: `campaign:${automation?.name || automationId || "phone-collector"}`,
+      auto_verify_and_book: Boolean(automation?.autoVerifyAndBook),
     });
 
     await prisma.conversationState.upsert({
@@ -316,7 +479,9 @@ export async function processLeadStep(params: {
       handled: true,
       success: true,
       nextStep: "COMPLETED",
-      replyMessage: "شماره همراه شما با موفقیت ذخیره شد. متشکریم! 🙏",
+      replyMessage:
+        automation?.leadSuccessMessage ||
+        "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏",
       capturedData: { phone },
     };
   }

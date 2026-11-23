@@ -28,6 +28,7 @@ import {
   KeywordSection,
   OpeningDmSection,
   RevealDmSection,
+  LeadFormSection,
 } from "./campaign-builder/index";
 
 export type { CampaignBuilderProps };
@@ -72,6 +73,17 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [linkOpen, setLinkOpen] = useState(false);
   const [trackedDestinationUrl, setTrackedDestinationUrl] = useState("");
   const [linkButtonLabel, setLinkButtonLabel] = useState("Open link");
+
+  const [leadFormEnabled, setLeadFormEnabled] = useState(false);
+  const [collectName, setCollectName] = useState(false);
+  const [leadPromptName, setLeadPromptName] = useState("لطفاً نام و نام خانوادگی خود را وارد کنید:");
+  const [collectPhone, setCollectPhone] = useState(false);
+  const [leadPromptPhone, setLeadPromptPhone] = useState("لطفاً شماره همراه خود را وارد کنید:");
+  const [confirmBeforeSave, setConfirmBeforeSave] = useState(false);
+  const [confirmMessage, setConfirmMessage] = useState("شماره شما {phone} است، آیا تایید می‌کنید؟");
+  const [collectPhoneSkipOtp, setCollectPhoneSkipOtp] = useState(false);
+  const [autoVerifyAndBook, setAutoVerifyAndBook] = useState(false);
+  const [leadSuccessMessage, setLeadSuccessMessage] = useState("اطلاعات شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏");
 
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 
@@ -167,6 +179,19 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         const link = c.trackedLinks?.[0]?.destinationUrl ?? "";
         setTrackedDestinationUrl(link);
         setLinkOpen(Boolean(link));
+
+        if (c.collectName || c.collectPhone) {
+          setLeadFormEnabled(true);
+        }
+        if (c.collectName) setCollectName(true);
+        if (c.leadPromptName) setLeadPromptName(c.leadPromptName);
+        if (c.collectPhone) setCollectPhone(true);
+        if (c.leadPromptPhone) setLeadPromptPhone(c.leadPromptPhone);
+        if (c.confirmBeforeSave) setConfirmBeforeSave(true);
+        if (c.confirmMessage) setConfirmMessage(c.confirmMessage);
+        if (c.collectPhoneSkipOtp) setCollectPhoneSkipOtp(true);
+        if (c.autoVerifyAndBook) setAutoVerifyAndBook(true);
+        if (c.leadSuccessMessage) setLeadSuccessMessage(c.leadSuccessMessage);
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -296,6 +321,15 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       trackedDestinationUrl: trackedDestinationUrl.trim() || "",
       linkButtonLabel: linkButtonLabel.trim() || "Open link",
       isActive: activeValue,
+      collectName: leadFormEnabled ? collectName : false,
+      leadPromptName: leadFormEnabled && collectName ? leadPromptName.trim() : null,
+      collectPhone: leadFormEnabled ? collectPhone : false,
+      leadPromptPhone: leadFormEnabled && collectPhone ? leadPromptPhone.trim() : null,
+      confirmBeforeSave: leadFormEnabled && collectPhone ? confirmBeforeSave : false,
+      confirmMessage: leadFormEnabled && collectPhone && confirmBeforeSave ? confirmMessage.trim() : null,
+      collectPhoneSkipOtp: leadFormEnabled && collectPhone ? collectPhoneSkipOtp : false,
+      autoVerifyAndBook: leadFormEnabled ? autoVerifyAndBook : false,
+      leadSuccessMessage: leadFormEnabled && (collectName || collectPhone) ? leadSuccessMessage.trim() : null,
     };
 
     try {
@@ -572,6 +606,29 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             linkButtonLabel={linkButtonLabel}
             setLinkButtonLabel={setLinkButtonLabel}
             ensureLinkToken={ensureLinkToken}
+          />
+
+          <LeadFormSection
+            leadFormEnabled={leadFormEnabled}
+            setLeadFormEnabled={setLeadFormEnabled}
+            collectName={collectName}
+            setCollectName={setCollectName}
+            leadPromptName={leadPromptName}
+            setLeadPromptName={setLeadPromptName}
+            collectPhone={collectPhone}
+            setCollectPhone={setCollectPhone}
+            leadPromptPhone={leadPromptPhone}
+            setLeadPromptPhone={setLeadPromptPhone}
+            confirmBeforeSave={confirmBeforeSave}
+            setConfirmBeforeSave={setConfirmBeforeSave}
+            confirmMessage={confirmMessage}
+            setConfirmMessage={setConfirmMessage}
+            collectPhoneSkipOtp={collectPhoneSkipOtp}
+            setCollectPhoneSkipOtp={setCollectPhoneSkipOtp}
+            autoVerifyAndBook={autoVerifyAndBook}
+            setAutoVerifyAndBook={setAutoVerifyAndBook}
+            leadSuccessMessage={leadSuccessMessage}
+            setLeadSuccessMessage={setLeadSuccessMessage}
           />
         </div>
 

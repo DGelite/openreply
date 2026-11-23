@@ -20,6 +20,15 @@ export interface LoadedCampaign {
   publicReplyMessages: string[];
   isActive: boolean;
   instagramAccountId: string;
+  collectName?: boolean;
+  leadPromptName?: string | null;
+  collectPhone?: boolean;
+  leadPromptPhone?: string | null;
+  leadSuccessMessage?: string | null;
+  collectPhoneSkipOtp?: boolean;
+  autoVerifyAndBook?: boolean;
+  confirmBeforeSave?: boolean;
+  confirmMessage?: string | null;
   trackedLinks?: { destinationUrl: string }[];
 }
 

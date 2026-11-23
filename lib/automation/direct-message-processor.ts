@@ -349,6 +349,7 @@ export async function processIncomingDirectMessage(
             instagramAccountId,
             provider: (account.primaryProvider || "META") as any,
             lead_source: "openreply-confirmed-flow",
+            auto_verify_and_book: Boolean(config.autoVerifyAndBook || activeAutomation.autoVerifyAndBook),
           });
 
           if (config.requireOtp) {
@@ -451,6 +452,7 @@ export async function processIncomingDirectMessage(
             instagramAccountId,
             provider: (account.primaryProvider || "META") as any,
             lead_source: "openreply-confirmed-flow-name",
+            auto_verify_and_book: Boolean(config.autoVerifyAndBook || activeAutomation.autoVerifyAndBook),
           });
 
           const nextEdge = graph.edges?.find((e) => e.sourceNodeId === currentNode?.id);
@@ -501,6 +503,76 @@ export async function processIncomingDirectMessage(
             await sendDirectMessage(accessToken, instagramAccountId, userId, successMsg);
             return;
           }
+        }
+      } else if (activeAutomation) {
+        // Standard Campaign confirmation (without Flow Graph)
+        if (pendingConf.type === "phone") {
+          const leadRecord = await prisma.lead.findUnique({
+            where: { id: `lead_${instagramAccountId}_${userId}` },
+          });
+
+          await prisma.conversationState.update({
+            where: { id: conversationState.id },
+            data: {
+              step: "COMPLETED",
+              extractedPhone: confirmedValue,
+              phoneConfidence: 1.0,
+              phoneOwner: "SELF",
+              phoneRaw: confirmedValue,
+              phoneBuffer: null,
+              phoneBufferExpiresAt: null,
+              conversationStatus: "LEAD_CAPTURED",
+              metadata: updatedMeta,
+            },
+          });
+
+          await prisma.lead.upsert({
+            where: { id: `lead_${instagramAccountId}_${userId}` },
+            create: {
+              id: `lead_${instagramAccountId}_${userId}`,
+              workspaceId: account.workspaceId,
+              instagramAccountId,
+              userId,
+              username,
+              phone: confirmedValue,
+              phoneConfidence: 1.0,
+              phoneOwner: "SELF",
+              phoneRaw: confirmedValue,
+              phoneVerified: true,
+              provider: (account.primaryProvider || "META") as any,
+              crmSyncStatus: "PENDING",
+            },
+            update: {
+              phone: confirmedValue,
+              phoneConfidence: 1.0,
+              phoneOwner: "SELF",
+              phoneRaw: confirmedValue,
+              username: username ?? undefined,
+              provider: (account.primaryProvider || "META") as any,
+              phoneVerified: true,
+            },
+          });
+
+          void syncLeadToWampCrm({
+            leadId: `lead_${instagramAccountId}_${userId}`,
+            phone: confirmedValue,
+            full_name: leadRecord?.name || undefined,
+            username,
+            igsid: userId,
+            instagramAccountId,
+            provider: (account.primaryProvider || "META") as any,
+            lead_source: `campaign:${activeAutomation.name || activeAutomation.id}`,
+            auto_verify_and_book: Boolean(activeAutomation.autoVerifyAndBook),
+          });
+
+          await sendDirectMessage(
+            accessToken,
+            instagramAccountId,
+            userId,
+            activeAutomation.leadSuccessMessage ||
+              "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏"
+          );
+          return;
         }
       }
     }
@@ -751,7 +823,8 @@ export async function processIncomingDirectMessage(
   // Check lead prompt step
   if (
     conversationState &&
-    (conversationState.step === "AWAITING_EMAIL" ||
+    (conversationState.step === "AWAITING_NAME" ||
+      conversationState.step === "AWAITING_EMAIL" ||
       conversationState.step === "AWAITING_PHONE" ||
       conversationState.step === "AWAITING_OTP")
   ) {
@@ -1113,9 +1186,9 @@ export async function processIncomingDirectMessage(
         return;
       }
 
-      // ── D. Email / Phone Collection Prompting ────────────────────────────
-      if (automation.collectEmail || automation.collectPhone) {
-        if (automation.collectPhoneSkipOtp && validatePhone(messageText)) {
+      // ── D. Name / Email / Phone Collection Prompting ────────────────────────────
+      if (automation.collectName || automation.collectEmail || automation.collectPhone) {
+        if (!automation.collectName && automation.collectPhone && automation.collectPhoneSkipOtp && validatePhone(messageText)) {
           await savePhoneLeadDirectly({
             phone: messageText,
             username,
@@ -1134,7 +1207,9 @@ export async function processIncomingDirectMessage(
           return;
         }
 
-        const initialStep = automation.collectEmail
+        const initialStep = automation.collectName
+          ? "AWAITING_NAME"
+          : automation.collectEmail
           ? "AWAITING_EMAIL"
           : "AWAITING_PHONE";
 
@@ -1156,7 +1231,9 @@ export async function processIncomingDirectMessage(
         });
 
         const promptText =
-          initialStep === "AWAITING_EMAIL"
+          initialStep === "AWAITING_NAME"
+            ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+            : initialStep === "AWAITING_EMAIL"
             ? automation.leadPromptEmail || "لطفاً ایمیل خود را وارد کنید:"
             : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
 
