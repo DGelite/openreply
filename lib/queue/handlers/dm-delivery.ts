@@ -135,6 +135,9 @@ export async function deliverPrivateReply(params: {
     Boolean(automation.openingDmMessage) &&
     Boolean(automation.openingDmButtonLabel);
 
+  const hasLeadForm = Boolean(automation.collectName || automation.collectPhone);
+  const hasDmMessage = Boolean(automation.dmMessage && automation.dmMessage.trim());
+
   let sendResult: any = null;
 
   if (useOpeningDm) {
@@ -157,6 +160,15 @@ export async function deliverPrivateReply(params: {
         ],
       }
     );
+  } else if (!hasDmMessage && hasLeadForm) {
+    // If no separate DM message is configured, use the private reply to directly send the lead prompt
+    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
+    const promptText =
+      initialStep === "AWAITING_NAME"
+        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+
+    sendResult = await providerManager.privateReply(accountId, commentId, promptText);
   } else if (automation.trackedLinks[0]) {
     const selectedMessage = selectDmMessageVariation(automation.dmMessage);
     const bodyText =
@@ -219,7 +231,7 @@ export async function deliverPrivateReply(params: {
     },
   });
 
-  if (!useOpeningDm && (automation.collectName || automation.collectPhone)) {
+  if (!useOpeningDm && hasLeadForm) {
     const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
     await prisma.conversationState.upsert({
       where: {
@@ -241,12 +253,15 @@ export async function deliverPrivateReply(params: {
       },
     });
 
-    const promptText =
-      initialStep === "AWAITING_NAME"
-        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
-        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+    // If a separate DM message was already sent above as privateReply, send promptText as follow-up
+    if (hasDmMessage) {
+      const promptText =
+        initialStep === "AWAITING_NAME"
+          ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+          : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
 
-    await providerManager.sendTextMessage(accountId, commenterId, promptText);
+      await providerManager.sendTextMessage(accountId, commenterId, promptText);
+    }
   }
 }
 

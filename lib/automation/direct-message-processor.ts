@@ -342,9 +342,15 @@ export async function processIncomingDirectMessage(
             },
           });
 
+          const leadRecord = await prisma.lead.findUnique({
+            where: { id: `lead_${instagramAccountId}_${userId}` },
+          });
+          const leadFullName = leadRecord?.name || (conversationState.metadata as any)?.name || undefined;
+
           void syncLeadToWampCrm({
             leadId: `lead_${instagramAccountId}_${userId}`,
             phone: confirmedValue,
+            full_name: leadFullName,
             username,
             igsid: userId,
             instagramAccountId,
@@ -574,7 +580,7 @@ export async function processIncomingDirectMessage(
           void syncLeadToWampCrm({
             leadId: `lead_${instagramAccountId}_${userId}`,
             phone: confirmedValue,
-            full_name: leadRecord?.name || undefined,
+            full_name: leadRecord?.name || (conversationState.metadata as any)?.name || undefined,
             username,
             igsid: userId,
             instagramAccountId,
@@ -583,13 +589,30 @@ export async function processIncomingDirectMessage(
             auto_verify_and_book: Boolean(activeAutomation.autoVerifyAndBook),
           });
 
+          const successMsg =
+            activeAutomation.leadSuccessMessage ||
+            "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
           await sendDirectMessage(
             accessToken,
             instagramAccountId,
             userId,
-            activeAutomation.leadSuccessMessage ||
-              "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏"
+            successMsg
           );
+
+          if (activeAutomation.dmMessage && activeAutomation.dmMessage.trim() !== successMsg.trim()) {
+            if (activeAutomation.trackedLinks?.[0]) {
+              await sendDirectMessageWithLinkButton(
+                accessToken,
+                instagramAccountId,
+                userId,
+                activeAutomation.dmMessage,
+                activeAutomation.linkButtonLabel || "مشاهده و دریافت لینک",
+                activeAutomation.trackedLinks[0].destinationUrl
+              );
+            } else {
+              await sendDirectMessage(accessToken, instagramAccountId, userId, activeAutomation.dmMessage);
+            }
+          }
           return;
         }
       }
@@ -658,6 +681,11 @@ export async function processIncomingDirectMessage(
         })
       : null;
 
+    const existingLead = await prisma.lead.findUnique({
+      where: { id: `lead_${instagramAccountId}_${userId}` },
+    });
+    const leadFullName = existingLead?.name || (conversationState.metadata as any)?.name || undefined;
+
     const isFlowActive = Boolean(
       activeAutomation &&
       activeAutomation.flowGraph &&
@@ -665,16 +693,69 @@ export async function processIncomingDirectMessage(
       (conversationState.activeNodeId || conversationState.step === "FLOW_NODE")
     );
 
-    // Immediate background sync to WAMP Booking CRM
+    let currentNode: any = null;
+    let nodeConfig: any = {};
+    if (isFlowActive && activeAutomation?.flowGraph) {
+      const graph = activeAutomation.flowGraph as unknown as FlowGraph;
+      currentNode = graph.nodes?.find((n) => n.id === conversationState.activeNodeId);
+      nodeConfig = (currentNode?.data as any)?.config || {};
+    }
+
+    const shouldConfirm = isFlowActive
+      ? Boolean(nodeConfig.confirmBeforeSave ?? activeAutomation?.confirmBeforeSave)
+      : Boolean(activeAutomation?.confirmBeforeSave);
+
+    // ── Check if confirmation step is requested before finalizing lead ────────
+    if (shouldConfirm) {
+      const existingMeta =
+        conversationState.metadata && typeof conversationState.metadata === "object"
+          ? (conversationState.metadata as any)
+          : {};
+      await prisma.conversationState.update({
+        where: { id: conversationState.id },
+        data: {
+          metadata: {
+            ...existingMeta,
+            pendingConfirmation: {
+              type: "phone",
+              value: phoneRes.phoneNumber,
+              nodeId: currentNode?.id,
+              automationId: activeAutomation?.id,
+            },
+          },
+        },
+      });
+
+      const template =
+        nodeConfig.confirmMessage ||
+        activeAutomation?.confirmMessage ||
+        "شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟";
+      const confirmMsg = template.replace(/{value}/g, phoneRes.phoneNumber);
+
+      await sendDirectQuickReplies(
+        accessToken,
+        instagramAccountId,
+        userId,
+        confirmMsg,
+        [
+          { content_type: "text", title: "✅ تایید", payload: "CONFIRM_LEAD_YES" },
+          { content_type: "text", title: "✏️ ویرایش", payload: "CONFIRM_LEAD_EDIT" },
+        ]
+      );
+      return;
+    }
+
+    // Immediate background sync to WAMP Booking CRM (when confirmation is not pending)
     void syncLeadToWampCrm({
       leadId: `lead_${instagramAccountId}_${userId}`,
       phone: phoneRes.phoneNumber,
+      full_name: leadFullName,
       username,
       igsid: userId,
       instagramAccountId,
       provider: (account.primaryProvider || "META") as any,
       lead_source: activeAutomation ? `campaign:${activeAutomation.name || activeAutomation.id}` : "openreply-ai-extraction",
-      auto_verify_and_book: Boolean(activeAutomation?.autoVerifyAndBook),
+      auto_verify_and_book: Boolean(nodeConfig.autoVerifyAndBook || activeAutomation?.autoVerifyAndBook),
       custom_data: {
         confidence: phoneRes.confidence,
         owner: phoneRes.owner,
@@ -685,50 +766,9 @@ export async function processIncomingDirectMessage(
     // If conversation is at a FLOW_NODE for collect_input
     if (isFlowActive && activeAutomation && activeAutomation.flowGraph) {
       const graph = activeAutomation.flowGraph as unknown as FlowGraph;
-      const currentNode = graph.nodes?.find((n) => n.id === conversationState.activeNodeId);
 
       if (currentNode?.type === "collect_input") {
-        const config = (currentNode.data as any)?.config || {};
-        const shouldConfirm = Boolean(config.confirmBeforeSave ?? activeAutomation.confirmBeforeSave);
-
-        // Check if confirmation step is requested before finalizing lead
-        if (shouldConfirm) {
-          const existingMeta =
-            conversationState.metadata && typeof conversationState.metadata === "object"
-              ? (conversationState.metadata as any)
-              : {};
-          await prisma.conversationState.update({
-            where: { id: conversationState.id },
-            data: {
-              metadata: {
-                ...existingMeta,
-                pendingConfirmation: {
-                  type: "phone",
-                  value: phoneRes.phoneNumber,
-                  nodeId: currentNode.id,
-                },
-              },
-            },
-          });
-
-          const template =
-            config.confirmMessage ||
-            activeAutomation.confirmMessage ||
-            "شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟";
-          const confirmMsg = template.replace(/{value}/g, phoneRes.phoneNumber);
-
-          await sendDirectQuickReplies(
-            accessToken,
-            instagramAccountId,
-            userId,
-            confirmMsg,
-            [
-              { content_type: "text", title: "✅ تایید", payload: "CONFIRM_LEAD_YES" },
-              { content_type: "text", title: "✏️ ویرایش", payload: "CONFIRM_LEAD_EDIT" },
-            ]
-          );
-          return;
-        }
+        const config = nodeConfig;
 
         // Check if OTP verification is requested
         if (config.requireOtp) {
@@ -823,6 +863,31 @@ export async function processIncomingDirectMessage(
 
     // If conversation was actively awaiting phone in a linear campaign, complete it!
     if (conversationState.step === "AWAITING_PHONE") {
+      const needsOtp = Boolean(
+        activeAutomation?.collectPhone &&
+        !activeAutomation?.collectPhoneSkipOtp &&
+        !activeAutomation?.autoVerifyAndBook
+      );
+
+      if (needsOtp) {
+        const leadResult = await processLeadStep({
+          workspaceId: account.workspaceId,
+          instagramAccountId,
+          userId,
+          username,
+          userMessage: phoneRes.phoneNumber,
+          currentStep: "AWAITING_PHONE",
+          automationId: activeAutomation?.id,
+          provider: (account.primaryProvider || "META") as any,
+          requireOtp: true,
+        });
+
+        if (leadResult.replyMessage) {
+          await sendDirectMessage(accessToken, instagramAccountId, userId, leadResult.replyMessage);
+        }
+        return;
+      }
+
       const successMsg =
         activeAutomation?.leadSuccessMessage ||
         "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";

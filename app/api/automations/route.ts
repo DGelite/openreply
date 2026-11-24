@@ -26,7 +26,7 @@ const createAutomationSchema = z
     matchAnyPost: z.boolean().optional().default(false),
     keywords: z.array(z.string().min(1).max(50)).max(10).optional().default([]),
     matchAnyWord: z.boolean().optional().default(false),
-    dmMessage: z.string().min(1).max(1000),
+    dmMessage: z.string().max(1000).optional().default(""),
     openingDmEnabled: z.boolean().optional().default(false),
     openingDmMessage: z.string().max(1000).optional().nullable(),
     openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -72,6 +72,18 @@ const createAutomationSchema = z
       (Boolean(d.openingDmMessage?.trim()) &&
         Boolean(d.openingDmButtonLabel?.trim())),
     { message: "Opening DM needs a message and a button label", path: ["openingDmMessage"] }
+  )
+  // Must provide either a DM message, an opening DM, or a lead form
+  .refine(
+    (d) =>
+      Boolean(d.dmMessage?.trim()) ||
+      d.openingDmEnabled ||
+      d.collectName ||
+      d.collectPhone,
+    {
+      message: "Please provide a DM message, enable opening DM, or configure a lead form",
+      path: ["dmMessage"],
+    }
   );
 
 const updateAutomationSchema = z.object({
@@ -83,7 +95,7 @@ const updateAutomationSchema = z.object({
   matchAnyPost: z.boolean().optional(),
   keywords: z.array(z.string().min(1).max(50)).max(10).optional(),
   matchAnyWord: z.boolean().optional(),
-  dmMessage: z.string().min(1).max(1000).optional(),
+  dmMessage: z.string().max(1000).optional(),
   openingDmEnabled: z.boolean().optional(),
   openingDmMessage: z.string().max(1000).optional().nullable(),
   openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -380,7 +392,7 @@ export async function POST(request: NextRequest) {
       matchAnyPost,
       keywords: matchAnyWord ? [] : parsed.data.keywords,
       matchAnyWord,
-      dmMessage: parsed.data.dmMessage,
+      dmMessage: parsed.data.dmMessage ?? "",
       openingDmEnabled,
       openingDmMessage: openingDmEnabled
         ? parsed.data.openingDmMessage || null

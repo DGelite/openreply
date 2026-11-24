@@ -295,7 +295,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       return setError("Pick a post or reel to trigger the campaign.");
     if (matchMode === "specific" && keywords.length === 0)
       return setError("Add at least one keyword, or switch to any word.");
-    if (!dmMessage.trim()) return setError("Add the DM with the link.");
+    if (!leadFormEnabled && !openingDmEnabled && !dmMessage.trim())
+      return setError("Add the DM with the link, or enable lead collection / opening DM.");
     if (openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
       return setError("Your opening DM needs a message and a button label.");
 
