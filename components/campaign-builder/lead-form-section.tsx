@@ -94,7 +94,7 @@ export function LeadFormSection({
                     type="text"
                     value={leadPromptName}
                     onChange={(e) => setLeadPromptName(e.target.value)}
-                    placeholder="لطفاً نام و نام خانوادگی خود را وارد کنید:"
+                    placeholder="سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
                     className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
                     maxLength={300}
                   />
@@ -124,7 +124,7 @@ export function LeadFormSection({
                       type="text"
                       value={leadPromptPhone}
                       onChange={(e) => setLeadPromptPhone(e.target.value)}
-                      placeholder="لطفاً شماره همراه خود را وارد کنید:"
+                      placeholder="ممنون! لطفاً شماره موبایلتون رو بفرستید 📱"
                       className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
                       maxLength={300}
                     />
@@ -146,7 +146,7 @@ export function LeadFormSection({
                         type="text"
                         value={confirmMessage}
                         onChange={(e) => setConfirmMessage(e.target.value)}
-                        placeholder="شماره شما {phone} است، آیا تایید می‌کنید؟"
+                        placeholder="شماره‌تون {phone} ثبت شد، درسته؟"
                         className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
                         maxLength={300}
                       />
@@ -203,7 +203,7 @@ export function LeadFormSection({
                 type="text"
                 value={leadSuccessMessage}
                 onChange={(e) => setLeadSuccessMessage(e.target.value)}
-                placeholder="اطلاعات شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏"
+                placeholder="عالیه! اطلاعاتتون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏"
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-xs text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
                 maxLength={300}
               />

@@ -4,6 +4,10 @@ import { syncLeadToWampCrm } from "@/lib/automation/crm-sync";
 import { deliverPrivateReply } from "@/lib/queue/handlers/dm-delivery";
 import { providerManager } from "@/lib/providers/manager/provider-manager";
 import { prisma } from "@/lib/db/client";
+import {
+  parseBoxApiDirectMessageEvents,
+  parseBoxApiPostbackEvents,
+} from "@/lib/providers/boxapi/webhook-parser";
 
 describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
   beforeEach(() => {
@@ -148,5 +152,53 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
         update: expect.objectContaining({ step: "AWAITING_NAME" }),
       })
     );
+  });
+
+  it("parses BoxAPI messaging_quick_replies and messaging_postbacks webhooks correctly", () => {
+    const qrEvents = parseBoxApiDirectMessageEvents({
+      event_id: "evt_qr_1",
+      event_type: "messaging_quick_replies",
+      account_id: "box_acc_1",
+      data: {
+        sender: { id: "user_123" },
+        recipient: { id: "ig_456" },
+        timestamp: 1700000000,
+        message: {
+          mid: "mid_qr_1",
+          text: "✅ تایید",
+          quick_reply: { payload: "CONFIRM_LEAD_YES" },
+        },
+      },
+    });
+
+    expect(qrEvents).toHaveLength(1);
+    expect(qrEvents[0]).toMatchObject({
+      boxAccountId: "box_acc_1",
+      userId: "user_123",
+      messageText: "✅ تایید",
+      quickReplyPayload: "CONFIRM_LEAD_YES",
+    });
+
+    const pbEvents = parseBoxApiPostbackEvents({
+      event_id: "evt_pb_1",
+      event_type: "messaging_postbacks",
+      account_id: "box_acc_1",
+      data: {
+        sender: { id: "user_123" },
+        recipient: { id: "ig_456" },
+        postback: {
+          mid: "mid_pb_1",
+          title: "مشاهده لینک",
+          payload: "REVEAL_LINK",
+        },
+      },
+    });
+
+    expect(pbEvents).toHaveLength(1);
+    expect(pbEvents[0]).toMatchObject({
+      boxAccountId: "box_acc_1",
+      userId: "user_123",
+      payload: "REVEAL_LINK",
+    });
   });
 });

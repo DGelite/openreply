@@ -111,6 +111,8 @@ export function parseBoxApiDirectMessageEvents(payload: unknown): ParsedBoxApiDm
   const isDmEvent =
     p.event_type === 'messaging' ||
     p.event_type === 'message' ||
+    p.event_type === 'messaging_quick_replies' ||
+    p.event_type === 'messages' ||
     (!p.event_type && (p.message || p.messaging));
 
   if (!isDmEvent) {
@@ -153,15 +155,36 @@ export function parseBoxApiDirectMessageEvents(payload: unknown): ParsedBoxApiDm
 
 export function parseBoxApiPostbackEvents(payload: unknown): ParsedBoxApiPostback[] {
   if (!payload || typeof payload !== 'object') return [];
-  const p = payload as BoxApiRawMessagingPayload;
+  const p = payload as any;
 
-  if (p.event_type !== 'messaging' || !p.data || !p.data.postback) {
+  const isPostbackEvent =
+    p.event_type === 'messaging' ||
+    p.event_type === 'messaging_postbacks' ||
+    p.event_type === 'postback';
+
+  if (!isPostbackEvent || !p.data) {
+    return [];
+  }
+
+  if (Array.isArray(p.data?.messaging)) {
+    return p.data.messaging
+      .filter((m: any) => Boolean(m.postback))
+      .map((m: any) => ({
+        boxAccountId: p.account_id || '',
+        userId: String(m.sender?.id || 'unknown'),
+        payload: m.postback.payload || '',
+        mid: m.postback.mid,
+        eventId: p.event_id,
+      }));
+  }
+
+  if (!p.data.postback) {
     return [];
   }
 
   return [
     {
-      boxAccountId: p.account_id,
+      boxAccountId: p.account_id || '',
       userId: String(p.data.sender?.id || 'unknown'),
       payload: p.data.postback.payload || '',
       mid: p.data.postback.mid,

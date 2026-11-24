@@ -168,7 +168,7 @@ export async function deliverPrivateReply(params: {
         }));
         await providerManager.sendGenericTemplate(accountId, commenterId, elements);
       } else if (step.quickRepliesToSend && step.quickRepliesToSend.chips.length > 0) {
-        const qrBody = step.quickRepliesToSend.text || step.dmMessageToSend || "یک گزینه را انتخاب کنید:";
+        const qrBody = step.quickRepliesToSend.text || step.dmMessageToSend || "لطفاً یکی از گزینه‌ها رو انتخاب کنید:";
         const qrs = step.quickRepliesToSend.chips.map((c) => ({
           content_type: "text" as const,
           title: c.title,
@@ -183,7 +183,7 @@ export async function deliverPrivateReply(params: {
         }
       } else if (step.buttons && step.buttons.length > 0) {
         const bodyText = renderMessageWithTracking({
-          message: step.dmMessageToSend || "یک گزینه را انتخاب کنید:",
+          message: step.dmMessageToSend || "لطفاً یکی از گزینه‌ها رو انتخاب کنید:",
           commenterName,
           trackedLinks: automation.trackedLinks,
         });
@@ -282,8 +282,8 @@ export async function deliverPrivateReply(params: {
     const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
     const promptText =
       initialStep === "AWAITING_NAME"
-        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
-        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+        ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
+        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱";
 
     sendResult = await providerManager.privateReply(accountId, commentId, promptText);
   } else if (automation.trackedLinks[0]) {
@@ -411,8 +411,8 @@ export async function deliverPostbackReveal(params: {
 
     const promptText =
       initialStep === "AWAITING_NAME"
-        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
-        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+        ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
+        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱";
 
     await providerManager.sendTextMessage(accountId, userId, promptText);
   } else if (primaryLink) {

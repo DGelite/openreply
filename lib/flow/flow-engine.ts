@@ -390,10 +390,10 @@ export async function executeFlowGraph(
       const prompt =
         config.promptMessage ||
         (config.inputType === "email"
-          ? "لطفاً آدرس ایمیل خود را وارد نمایید:"
+          ? "لطفاً ایمیلتون رو برام بفرستید:"
           : config.inputType === "name"
-          ? "لطفاً نام و نام خانوادگی خود را وارد نمایید:"
-          : "لطفاً شماره تماس همراه خود را ارسال فرمایید:");
+          ? "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
+          : "لطفاً شماره موبایلتون رو برام بفرستید 📱");
 
       results.push({
         nodeId: currentNode.id,

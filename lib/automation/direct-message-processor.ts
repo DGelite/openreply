@@ -225,7 +225,7 @@ export async function processIncomingDirectMessage(
         console.log(`[DM Processor] Outside operating hours (SILENT). Skipping automated reply for user ${userId}.`);
         return;
       } else if (schedEval.action === "SEND_OFFLINE_MESSAGE") {
-        const offlineMsg = schedEval.offlineMessage || "سلام! در حال حاضر خارج از ساعات کاری هستیم. پیام شما دریافت شد و به زودی پاسخ داده می‌شود.";
+        const offlineMsg = schedEval.offlineMessage || "سلام! الان خارج از ساعت کاری هستیم، ولی پیامتون رو گرفتیم و خیلی زود جوابتون رو می‌دیم 🙏";
         await sendDirectMessage(accessToken, instagramAccountId, userId, offlineMsg);
         return;
       } else if (schedEval.action === "ESCALATE") {
@@ -273,8 +273,8 @@ export async function processIncomingDirectMessage(
 
       const editPrompt =
         pendingConf.type === "name"
-          ? "لطفاً نام و نام خانوادگی صحیح خود را مجدداً وارد فرمایید:"
-          : "لطفاً شماره همراه صحیح خود را به صورت کامل (مثال: 09123456789) وارد فرمایید:";
+          ? "باشه، لطفاً اسم و فامیل درستتون رو دوباره برام بفرستید 🙏"
+          : "باشه، لطفاً شماره موبایل درستتون رو دوباره بفرستید (مثلاً 09123456789) 🙏";
       await sendDirectMessage(accessToken, instagramAccountId, userId, editPrompt);
       return;
     }
@@ -289,11 +289,15 @@ export async function processIncomingDirectMessage(
         include: { trackedLinks: true },
       });
 
-      if (
-        activeAutomation &&
-        activeAutomation.flowGraph &&
-        typeof activeAutomation.flowGraph === "object"
-      ) {
+      const hasFlowGraph = Boolean(
+        activeAutomation?.flowGraph &&
+        typeof activeAutomation.flowGraph === "object" &&
+        Array.isArray((activeAutomation.flowGraph as any).nodes) &&
+        (activeAutomation.flowGraph as any).nodes.length > 0 &&
+        (pendingConf.nodeId || conversationState.activeNodeId || conversationState.step === "FLOW_NODE")
+      );
+
+      if (activeAutomation && hasFlowGraph) {
         const graph = activeAutomation.flowGraph as unknown as FlowGraph;
         const currentNode = graph.nodes?.find(
           (n) => n.id === pendingConf.nodeId || n.id === conversationState.activeNodeId
@@ -419,7 +423,7 @@ export async function processIncomingDirectMessage(
             const successMsg =
               config.successMessage ||
               activeAutomation.leadSuccessMessage ||
-              "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
+              "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏";
             await prisma.conversationState.update({
               where: { id: conversationState.id },
               data: { step: "COMPLETED" },
@@ -518,7 +522,7 @@ export async function processIncomingDirectMessage(
             return;
           } else {
             const successMsg =
-              config.successMessage || "اطلاعات شما با موفقیت ثبت شد. متشکریم! 🙏";
+              config.successMessage || "عالیه! اطلاعاتتون با موفقیت ثبت شد، ممنون از شما 🙏";
             await prisma.conversationState.update({
               where: { id: conversationState.id },
               data: { step: "COMPLETED" },
@@ -590,7 +594,7 @@ export async function processIncomingDirectMessage(
 
           const successMsg =
             activeAutomation.leadSuccessMessage ||
-            "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
+            "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏";
           await sendDirectMessage(
             accessToken,
             instagramAccountId,
@@ -740,7 +744,7 @@ export async function processIncomingDirectMessage(
       const template =
         nodeConfig.confirmMessage ||
         activeAutomation?.confirmMessage ||
-        "شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟";
+        "شماره‌تون {phone} ثبت شد، درسته؟";
       const confirmMsg = template
         .replace(/{value}/g, phoneRes.phoneNumber)
         .replace(/{phone}/g, phoneRes.phoneNumber);
@@ -848,7 +852,7 @@ export async function processIncomingDirectMessage(
           const successMsg =
             config.successMessage ||
             activeAutomation.leadSuccessMessage ||
-            "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
+            "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏";
           await prisma.conversationState.update({
             where: { id: conversationState.id },
             data: { step: "COMPLETED" },
@@ -904,7 +908,7 @@ export async function processIncomingDirectMessage(
 
       const successMsg =
         activeAutomation?.leadSuccessMessage ||
-        "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
+        "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏";
       await prisma.conversationState.update({
         where: { id: conversationState.id },
         data: { step: "COMPLETED" },
@@ -1056,7 +1060,7 @@ export async function processIncomingDirectMessage(
           if (!norm.phone) {
             const baseValidationMsg =
               config.validationErrorMessage ||
-              "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:";
+              "شماره موبایل درست نیست؛ لطفاً شماره‌تون رو کامل بفرستید (مثلاً 09123456789) 🙏";
             const validationMsg = norm.replyMessageToUser
               ? `${norm.replyMessageToUser}\n\n${baseValidationMsg}`
               : baseValidationMsg;
@@ -1088,7 +1092,7 @@ export async function processIncomingDirectMessage(
 
             const template =
               config.confirmMessage ||
-              "شماره همراه شما «{value}» ثبت شد. آیا مورد تایید است؟";
+              "شماره‌تون «{phone}» ثبت شد، درسته؟";
             const confirmMsg = template
               .replace(/{value}/g, cleanPhone)
               .replace(/{phone}/g, cleanPhone);
@@ -1187,7 +1191,7 @@ export async function processIncomingDirectMessage(
             const successMsg =
               config.successMessage ||
               activeAutomation.leadSuccessMessage ||
-              "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏";
+              "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏";
             await prisma.conversationState.update({
               where: { id: conversationState.id },
               data: { step: "COMPLETED" },
@@ -1200,7 +1204,7 @@ export async function processIncomingDirectMessage(
           if (!validateEmail(emailClean)) {
             const validationMsg =
               config.validationErrorMessage ||
-              "ایمیل وارد شده معتبر نیست. لطفاً یک آدرس ایمیل معتبر (مانند name@example.com) وارد کنید:";
+              "ایمیل معتبر نیست؛ لطفاً یه ایمیل درست بفرستید (مثلاً name@example.com) 🙏";
             await sendDirectMessage(accessToken, instagramAccountId, userId, validationMsg);
             return;
           }
@@ -1275,7 +1279,7 @@ export async function processIncomingDirectMessage(
             );
             return;
           } else {
-            const successMsg = config.successMessage || "ایمیل شما با موفقیت ثبت شد! متشکریم 🙏";
+            const successMsg = config.successMessage || "ایمیلتون با موفقیت ثبت شد! ممنون از شما 🙏";
             await prisma.conversationState.update({
               where: { id: conversationState.id },
               data: { step: "COMPLETED" },
@@ -1326,7 +1330,7 @@ export async function processIncomingDirectMessage(
 
             const template =
               config.confirmMessage ||
-              "نام و نام خانوادگی شما «{value}» ثبت شد. آیا مورد تایید است؟";
+              "اسم و فامیلتون «{value}» ثبت شد، درسته؟";
             const confirmMsg = template
               .replace(/{value}/g, cleanName)
               .replace(/{name}/g, cleanName);
@@ -1417,7 +1421,7 @@ export async function processIncomingDirectMessage(
             );
             return;
           } else {
-            const successMsg = config.successMessage || "اطلاعات شما با موفقیت ثبت شد. متشکریم! 🙏";
+            const successMsg = config.successMessage || "عالیه! اطلاعاتتون با موفقیت ثبت شد، ممنون از شما 🙏";
             await prisma.conversationState.update({
               where: { id: conversationState.id },
               data: { step: "COMPLETED" },
@@ -1640,7 +1644,7 @@ export async function processIncomingDirectMessage(
             accessToken,
             instagramAccountId,
             userId,
-            automation.leadSuccessMessage || "اطلاعات شما با موفقیت ثبت شد!"
+            automation.leadSuccessMessage || "عالیه! اطلاعاتتون با موفقیت ثبت شد 🙏"
           );
           return;
         }
@@ -1670,10 +1674,10 @@ export async function processIncomingDirectMessage(
 
         const promptText =
           initialStep === "AWAITING_NAME"
-            ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+            ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
             : initialStep === "AWAITING_EMAIL"
-            ? automation.leadPromptEmail || "لطفاً ایمیل خود را وارد کنید:"
-            : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+            ? automation.leadPromptEmail || "لطفاً ایمیلتون رو بفرستید:"
+            : automation.leadPromptPhone || "لطفاً شماره موبایلتون رو بفرستید 📱";
 
         await sendDirectMessage(
           accessToken,
@@ -1939,7 +1943,7 @@ async function handleFlowExecutionResults(
         accessToken,
         account.instagramId,
         userId,
-        step.quickRepliesToSend.text || step.dmMessageToSend || "یک گزینه را انتخاب کنید:",
+        step.quickRepliesToSend.text || step.dmMessageToSend || "لطفاً یکی از گزینه‌ها رو انتخاب کنید:",
         qrOptions
       );
     } else if (step.buttons && step.buttons.length > 0) {

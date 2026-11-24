@@ -70,7 +70,7 @@ export async function processLeadStep(params: {
       return {
         handled: true,
         success: false,
-        replyMessage: "لطفاً نام و نام خانوادگی خود را به صورت کامل وارد نمایید:",
+        replyMessage: "لطفاً اسم و فامیلتون رو کامل‌تر برام بفرستید 🙏",
       };
     }
 
@@ -138,7 +138,7 @@ export async function processLeadStep(params: {
 
       const phonePromptBase =
         automation.leadPromptPhone ||
-        `ممنون ${name} عزیز! 🙏\nلطفاً شماره همراه خود را وارد کنید:`;
+        `ممنون ${name} جان! 🙏 لطفاً شماره موبایلتون رو هم بفرستید:`;
       const phonePrompt = norm.replyMessageToUser
         ? `${norm.replyMessageToUser}\n\n${phonePromptBase}`
         : phonePromptBase;
@@ -187,7 +187,7 @@ export async function processLeadStep(params: {
       nextStep: "COMPLETED",
       replyMessage:
         automation?.leadSuccessMessage ||
-        `ممنون ${name} عزیز! اطلاعات شما با موفقیت ثبت شد. 🙏`,
+        `عالیه ${name} جان! اطلاعاتتون با موفقیت ثبت شد 🙏`,
       capturedData: { name },
     };
   }
@@ -199,7 +199,7 @@ export async function processLeadStep(params: {
         handled: true,
         success: false,
         replyMessage:
-          "ایمیل وارد شده معتبر نیست. لطفاً یک آدرس ایمیل معتبر (مانند name@example.com) وارد کنید:",
+          "ایمیل معتبر نیست؛ لطفاً یه ایمیل درست بفرستید (مثلاً name@example.com) 🙏",
       };
     }
 
@@ -263,7 +263,7 @@ export async function processLeadStep(params: {
         success: true,
         nextStep: "AWAITING_PHONE",
         replyMessage:
-          "ایمیل شما با موفقیت ثبت شد! 👍\nلطفاً شماره همراه خود را نیز وارد کنید:",
+          "ایمیلتون با موفقیت ثبت شد 👍\nلطفاً شماره موبایلتون رو هم برام بفرستید:",
         capturedData: { email },
       };
     }
@@ -307,7 +307,7 @@ export async function processLeadStep(params: {
     const phone = norm.phone;
     if (!phone) {
       const retryPrompt =
-        "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:";
+        "شماره موبایل درست نیست؛ لطفاً شماره‌تون رو کامل بفرستید (مثلاً 09123456789) 🙏";
       return {
         handled: true,
         success: false,
@@ -392,8 +392,8 @@ export async function processLeadStep(params: {
       });
 
       const otpNotice = smsSent
-        ? "کد تأیید ۵ رقمی به شماره شما پیامک شد. لطفاً آن را اینجا ارسال کنید:"
-        : `کد تأیید شماره شما: ${otpCode}\nلطفاً برای تأیید شماره، این کد را ارسال کنید:`;
+        ? "یه کد تایید ۵ رقمی براتون پیامک شد، لطفاً همون کد رو اینجا بفرستید:"
+        : `کد تایید شما: ${otpCode}\nلطفاً این کد رو برای تایید شماره‌تون بفرستید:`;
 
       return {
         handled: true,
@@ -443,8 +443,10 @@ export async function processLeadStep(params: {
       });
 
       const confirmText = automation.confirmMessage
-        ? automation.confirmMessage.replace("{phone}", phone)
-        : `شماره شما ${phone} است، آیا تایید می‌کنید؟`;
+        ? automation.confirmMessage
+            .replace(/{phone}/g, phone)
+            .replace(/{value}/g, phone)
+        : `شماره‌تون ${phone} ثبت شد، درسته؟`;
 
       return {
         handled: true,
@@ -520,7 +522,7 @@ export async function processLeadStep(params: {
       nextStep: "COMPLETED",
       replyMessage:
         automation?.leadSuccessMessage ||
-        "شماره همراه شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏",
+        "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏",
       capturedData: { phone },
     };
   }
@@ -535,7 +537,7 @@ export async function processLeadStep(params: {
       return {
         handled: true,
         success: false,
-        replyMessage: "جلسه اعتبارسنجی منقضی شده است. لطفاً شماره خود را دوباره ارسال کنید:",
+        replyMessage: "زمان کد تایید تموم شده؛ لطفاً شماره‌تون رو دوباره بفرستید:",
         nextStep: "AWAITING_PHONE",
       };
     }
@@ -544,7 +546,7 @@ export async function processLeadStep(params: {
       return {
         handled: true,
         success: false,
-        replyMessage: "کد تأیید منقضی شده است. لطفاً شماره خود را مجدداً وارد نمایید:",
+        replyMessage: "کد تایید منقضی شده؛ لطفاً شماره‌تون رو دوباره بفرستید:",
         nextStep: "AWAITING_PHONE",
       };
     }
@@ -553,7 +555,7 @@ export async function processLeadStep(params: {
       return {
         handled: true,
         success: false,
-        replyMessage: "تعداد دفعات تلاش بیش از حد مجاز بود. لطفاً دقایقی دیگر شماره خود را وارد نمایید:",
+        replyMessage: "تعداد تلاش‌ها زیاد بود؛ لطفاً چند دقیقه دیگه شماره‌تون رو بفرستید:",
         nextStep: "COMPLETED",
       };
     }
@@ -568,7 +570,7 @@ export async function processLeadStep(params: {
       return {
         handled: true,
         success: false,
-        replyMessage: "کد وارد شده صحیح نیست. لطفاً کد ۵ رقمی را با دقت وارد کنید:",
+        replyMessage: "کد اشتباهه؛ لطفاً کد ۵ رقمی که براتون ارسال شده رو دقیق‌تر بفرستید:",
       };
     }
 
@@ -615,7 +617,7 @@ export async function processLeadStep(params: {
       handled: true,
       success: true,
       nextStep: "COMPLETED",
-      replyMessage: "شماره همراه شما با موفقیت تأیید و ثبت شد! متشکریم 🙏",
+      replyMessage: "عالیه! شماره‌تون با موفقیت تایید و ثبت شد، ممنون از شما 🙏",
       capturedData: { phone: lead.phone || undefined },
     };
   }

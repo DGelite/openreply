@@ -76,14 +76,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
 
   const [leadFormEnabled, setLeadFormEnabled] = useState(false);
   const [collectName, setCollectName] = useState(false);
-  const [leadPromptName, setLeadPromptName] = useState("لطفاً نام و نام خانوادگی خود را وارد کنید:");
+  const [leadPromptName, setLeadPromptName] = useState("سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏");
   const [collectPhone, setCollectPhone] = useState(false);
-  const [leadPromptPhone, setLeadPromptPhone] = useState("لطفاً شماره همراه خود را وارد کنید:");
+  const [leadPromptPhone, setLeadPromptPhone] = useState("ممنون! لطفاً شماره موبایلتون رو بفرستید 📱");
   const [confirmBeforeSave, setConfirmBeforeSave] = useState(false);
-  const [confirmMessage, setConfirmMessage] = useState("شماره شما {phone} است، آیا تایید می‌کنید؟");
+  const [confirmMessage, setConfirmMessage] = useState("شماره‌تون {phone} ثبت شد، درسته؟");
   const [collectPhoneSkipOtp, setCollectPhoneSkipOtp] = useState(false);
   const [autoVerifyAndBook, setAutoVerifyAndBook] = useState(false);
-  const [leadSuccessMessage, setLeadSuccessMessage] = useState("اطلاعات شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏");
+  const [leadSuccessMessage, setLeadSuccessMessage] = useState("عالیه! اطلاعاتتون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏");
 
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 

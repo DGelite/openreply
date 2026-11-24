@@ -992,10 +992,10 @@ export default function NodeInspector({
                 onChange={(e) => updateConfig("promptMessage", e.target.value)}
                 placeholder={
                   config.inputType === "email"
-                    ? "لطفاً آدرس ایمیل خود را ارسال فرمایید:"
+                    ? "لطفاً ایمیلتون رو برام بفرستید:"
                     : config.inputType === "name"
-                    ? "لطفاً نام و نام خانوادگی خود را ارسال فرمایید:"
-                    : "لطفاً شماره تماس همراه خود را ارسال کنید:"
+                    ? "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
+                    : "لطفاً شماره موبایلتون رو برام بفرستید 📱"
                 }
                 className="w-full rounded-md border border-border bg-background p-2.5 text-xs text-foreground resize-y"
               />
@@ -1007,7 +1007,7 @@ export default function NodeInspector({
                 type="text"
                 value={config.successMessage || ""}
                 onChange={(e) => updateConfig("successMessage", e.target.value)}
-                placeholder="اطلاعات شما با موفقیت ثبت شد! به زودی با شما تماس می‌گیریم. 🙏"
+                placeholder="عالیه! اطلاعاتتون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏"
                 className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
               />
             </div>
@@ -1058,7 +1058,7 @@ export default function NodeInspector({
               {config.confirmBeforeSave && (
                 <div className="space-y-1.5 pt-1">
                   <label className="text-xs font-medium text-muted block">
-                    متن مودبانه پیام تأییدیه (متغیر <code className="text-accent font-mono font-bold">{"{value}"}</code> با مقدار ارسالی کاربر جایگزین می‌شود):
+                    متن پیام تأییدیه (متغیر <code className="text-accent font-mono font-bold">{"{value}"}</code> با مقدار ارسالی کاربر جایگزین می‌شود):
                   </label>
                   <textarea
                     rows={2}
@@ -1066,11 +1066,11 @@ export default function NodeInspector({
                       config.confirmMessage !== undefined
                         ? config.confirmMessage
                         : config.inputType === "name"
-                        ? "نام شما «{value}» ثبت شد. آیا مورد تایید است؟"
-                        : "شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟"
+                        ? "اسم و فامیلتون «{value}» ثبت شد، درسته؟"
+                        : "شماره‌تون {value} ثبت شد، درسته؟"
                     }
                     onChange={(e) => updateConfig("confirmMessage", e.target.value)}
-                    placeholder="شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟"
+                    placeholder="شماره‌تون {value} ثبت شد، درسته؟"
                     className="w-full rounded-md border border-border bg-background p-2 text-xs text-foreground resize-y leading-relaxed"
                   />
                 </div>
