@@ -20,6 +20,9 @@ interface AiConfig {
   activeEndTime: string;
   timezone: string;
   offlineMessage: string | null;
+  leadNormalizerEnabled?: boolean;
+  leadNormalizerMode?: "SILENT_NORMALIZE_ONLY" | "ASSISTANT_CO_PILOT";
+  leadNormalizerPrompt?: string;
 }
 
 export default function AiAgentAdminPage() {
@@ -269,6 +272,104 @@ export default function AiAgentAdminPage() {
               <p className="text-[11px] text-muted mt-1">
                 🛡️ ایمنی ۱۰۰٪ کاربر: در صورت بروز هرگونه خطای API یا اتمام اعتبار، به هیچ وجه ارور یا پیام نامربوطی به کاربر دایرکت ارسال نخواهد شد.
               </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Lead Normalizer & Data Extraction Settings */}
+        <section className="panel rounded p-6 space-y-4 border border-accent/20 bg-accent/5">
+          <div className="flex items-center justify-between border-b border-border pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-semibold text-foreground">
+                  {isFa ? "سیستم پایش و نرمال‌سازی نام و شماره لیدها (Silent Normalizer)" : "Silent Lead Normalizer & Data Extraction"}
+                </h2>
+                <span className="text-[11px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded font-medium">
+                  {isFa ? "نامحسوس و بدون باگ" : "Invisible AI"}
+                </span>
+              </div>
+              <p className="text-xs text-muted mt-1">
+                {isFa
+                  ? "استخراج تمیز نام و نام خانوادگی، شماره تماس و یادداشت‌های مشتری از جملات محاوره‌ای و ثبت مستقیم در CRM بوکینگ."
+                  : "Automatically cleans full names, phone numbers, and notes from conversational DMs and syncs them directly to CRM."}
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={config?.leadNormalizerEnabled ?? true}
+                onChange={(e) =>
+                  setConfig((prev) => (prev ? { ...prev, leadNormalizerEnabled: e.target.checked } : null))
+                }
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            <div>
+              <label className="block text-xs font-medium text-foreground mb-1">
+                {isFa ? "حالت عملکرد نرمال‌ساز (Normalizer Mode)" : "Normalizer Mode"}
+              </label>
+              <select
+                value={config?.leadNormalizerMode || "SILENT_NORMALIZE_ONLY"}
+                onChange={(e) =>
+                  setConfig((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          leadNormalizerMode: e.target.value as "SILENT_NORMALIZE_ONLY" | "ASSISTANT_CO_PILOT",
+                        }
+                      : null
+                  )
+                }
+                className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+              >
+                <option value="SILENT_NORMALIZE_ONLY">
+                  {isFa
+                    ? "حالت ۱۰۰٪ نامحسوس (Silent Mode - بدون ارسال هیچ پیام AI به کاربر)"
+                    : "100% Silent Mode (No AI messages sent to customer)"}
+                </option>
+                <option value="ASSISTANT_CO_PILOT">
+                  {isFa
+                    ? "حالت دستیار تعاملی (Co-Pilot - پاسخ کوتاه به سوال احتمالی + استخراج)"
+                    : "Co-Pilot Mode (Short answer to question + extraction)"}
+                </option>
+              </select>
+              <p className="text-[11px] text-muted mt-1">
+                {isFa
+                  ? "در حالت نامحسوس، کاربر اصلاً متوجه حضور هوش مصنوعی نمی‌شود؛ نام و شماره پاکسازی شده و فرم روند عادیش را طی می‌کند."
+                  : "In silent mode, customers never see any AI messages; data is cleaned and registered silently in CRM."}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border bg-surface/50 p-3 space-y-1">
+              <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                ⚡ فیلتر سریع صفر-توکن (Fast Path 0ms):
+              </span>
+              <p className="text-[11px] text-muted leading-relaxed">
+                اگر کاربر ورودی تمیز ۲ کلمه‌ای (مانند «آرمین طهماسبی») یا شماره ۱۱ رقمی بفرستد، سیستم بدون مصرف حتی ۱ توکن هوش مصنوعی و با سرعت صفر میلی‌ثانیه مستقیماً در CRM ذخیره می‌کند.
+              </p>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-foreground mb-1">
+                {isFa ? "دستورالعمل و پرامپت اختصاصی استخراج لید (اختیاری)" : "Custom Lead Normalizer Prompt (Optional)"}
+              </label>
+              <textarea
+                rows={3}
+                value={config?.leadNormalizerPrompt || ""}
+                onChange={(e) =>
+                  setConfig((prev) => (prev ? { ...prev, leadNormalizerPrompt: e.target.value } : null))
+                }
+                placeholder={
+                  isFa
+                    ? "در صورت خالی بودن، از پرامپت پیش‌فرض بهینه‌شده فارسی برای تفکیک نام و نام خانوادگی، شماره و یادداشت‌ها استفاده می‌شود..."
+                    : "Leave blank to use default optimized Persian extraction prompt..."
+                }
+                className="w-full rounded border border-border bg-surface px-3 py-2 text-xs font-mono text-foreground outline-none focus:border-accent"
+              />
             </div>
           </div>
         </section>

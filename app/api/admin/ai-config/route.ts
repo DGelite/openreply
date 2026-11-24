@@ -82,14 +82,24 @@ export async function GET(request: NextRequest) {
       embeddingModel: "text-embedding-004",
       allowAiFallback: false,
       lastTestStatus: {},
+      leadNormalizerEnabled: true,
+      leadNormalizerMode: "SILENT_NORMALIZE_ONLY",
+      leadNormalizerPrompt: "",
     };
 
     if (!config) {
       return NextResponse.json({ success: true, data: defaultData });
     }
 
+    const leadNorm = (config.safetySettings as Record<string, unknown>)?.leadNormalizer as
+      | { enabled?: boolean; mode?: string; prompt?: string }
+      | undefined;
+
     const responseData = {
       ...config,
+      leadNormalizerEnabled: leadNorm?.enabled ?? true,
+      leadNormalizerMode: leadNorm?.mode || "SILENT_NORMALIZE_ONLY",
+      leadNormalizerPrompt: leadNorm?.prompt || "",
       geminiApiKeyMasked: maskKey(config.geminiApiKeyEncrypted || config.apiKeyEncrypted),
       hasGeminiApiKey: Boolean(config.geminiApiKeyEncrypted || config.apiKeyEncrypted || process.env.GEMINI_API_KEY),
       geminiModel: config.geminiModel || "gemini-2.5-flash",
@@ -181,6 +191,9 @@ export async function POST(request: NextRequest) {
       embeddingProvider,
       embeddingModel,
       allowAiFallback,
+      leadNormalizerEnabled,
+      leadNormalizerMode,
+      leadNormalizerPrompt,
     } = body;
 
     const encryptedKey = apiKey && typeof apiKey === "string" && apiKey.trim() ? encryptToken(apiKey.trim()) : undefined;
@@ -197,11 +210,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const existingConfig = await prisma.aiConfig.findUnique({ where: { workspaceId } });
+    const existingSafety = (existingConfig?.safetySettings as Record<string, unknown>) || {};
+    const updatedSafety = {
+      ...existingSafety,
+      leadNormalizer: {
+        enabled: leadNormalizerEnabled !== undefined ? Boolean(leadNormalizerEnabled) : true,
+        mode: leadNormalizerMode || "SILENT_NORMALIZE_ONLY",
+        prompt: leadNormalizerPrompt || "",
+      },
+    };
+
     const updatedConfig = await prisma.aiConfig.upsert({
       where: { workspaceId },
       create: {
         workspaceId,
         isEnabled: isEnabled ?? true,
+        safetySettings: updatedSafety,
         provider: (provider as AiProviderType) || "GEMINI",
         model: model || "gemini-2.5-flash",
         apiKeyEncrypted: encryptedKey,
@@ -285,6 +310,7 @@ export async function POST(request: NextRequest) {
         embeddingProvider: embeddingProvider || undefined,
         embeddingModel: embeddingModel || undefined,
         allowAiFallback: allowAiFallback !== undefined ? Boolean(allowAiFallback) : undefined,
+        safetySettings: updatedSafety,
       },
     });
 

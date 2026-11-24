@@ -145,38 +145,43 @@ export async function normalizeLeadData(
   }
 
   // 2. Fetch AI Config for Workspace
-  let aiConfig: { isEnabled: boolean; systemPrompt?: string | null } | null = null;
+  let aiConfig: any = null;
   try {
     aiConfig = await prisma.aiConfig.findUnique({
       where: { workspaceId },
-      select: { isEnabled: true, systemPrompt: true },
+      select: { isEnabled: true, systemPrompt: true, safetySettings: true },
     });
   } catch (err) {
     console.error("[LeadNormalizer] Error fetching AiConfig:", err);
   }
 
-  // If AI is disabled or DB failed, execute safe heuristic fallback
-  if (aiConfig && !aiConfig.isEnabled) {
+  const leadNorm = (aiConfig?.safetySettings as any)?.leadNormalizer || {};
+  const isNormalizerEnabled = leadNorm.enabled ?? aiConfig?.isEnabled ?? true;
+
+  // If normalizer or AI is disabled, execute safe heuristic fallback
+  if (!isNormalizerEnabled || (aiConfig && !aiConfig.isEnabled)) {
     return fallbackRegexExtraction(rawClean, expectedField);
   }
+
+  const effectiveMode = leadNorm.mode || mode || "SILENT_NORMALIZE_ONLY";
+  const effectivePrompt = leadNorm.prompt || customPrompt || DEFAULT_NORMALIZER_PROMPT;
 
   // 3. AI Execution with Graceful Failure Protection
   try {
     const aiEngine = await getAiEngine(workspaceId);
-    const systemPrompt = customPrompt || DEFAULT_NORMALIZER_PROMPT;
 
     const userPrompt = `متن پیام کاربر در دایرکت:
 """${rawClean}"""
 
 فیلد مورد انتظار فرم: ${expectedField}
-حالت اجرا: ${mode}
+حالت اجرا: ${effectiveMode}
 اطلاعات قبلی ثبت شده از لید: ${JSON.stringify(currentLead || {})}
 
 اطلاعات استخراج شده را در قالب فرمت JSON مشخص شده تحویل بده:`;
 
     const completion = await aiEngine.generateCompletion({
       messages: [{ role: "user", content: userPrompt }],
-      systemPrompt,
+      systemPrompt: effectivePrompt,
       temperature: 0.1, // Deterministic extraction
       maxTokens: 300,
       jsonMode: true,
