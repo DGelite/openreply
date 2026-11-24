@@ -41,8 +41,18 @@ export function BaseCustomNode({ data, selected }: any) {
   const type = data.type as FlowNodeType;
   const colorClass = NODE_TYPE_COLORS[type] || "text-zinc-400 border-zinc-500/30 bg-zinc-500/10";
   
+  const buttons = Array.isArray(data.config?.buttons) ? data.config.buttons : [];
+  const quickReplies = Array.isArray(data.config?.quickReplies)
+    ? data.config.quickReplies
+    : Array.isArray(data.config?.chips)
+    ? data.config.chips
+    : [];
+
+  const hasPostbackButtons = type === "send_dm" && buttons.some((b: any) => b.type === "postback");
+  const hasQuickReplies = type === "quick_reply" && quickReplies.length > 0;
+
   return (
-    <div className={`relative w-[230px] rounded-xl border bg-panel shadow-xl transition-all ${selected ? "border-accent ring-2 ring-accent/30 scale-[1.02]" : "border-border hover:border-zinc-500"}`}>
+    <div className={`relative w-[250px] rounded-xl border bg-panel shadow-xl transition-all ${selected ? "border-accent ring-2 ring-accent/30 scale-[1.02]" : "border-border hover:border-zinc-500"}`}>
       {/* Target Handle (Input) - Triggers don't have inputs */}
       {type !== "trigger" && (
         <Handle 
@@ -76,14 +86,84 @@ export function BaseCustomNode({ data, selected }: any) {
           {data.previewText || "تنظیمات وارد نشده است..."}
         </p>
 
-        {/* Quick visual badges for rich nodes */}
-        {type === "quick_reply" && Array.isArray(data.config?.quickReplies) && data.config.quickReplies.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {data.config.quickReplies.slice(0, 3).map((qr: any, idx: number) => (
-              <span key={idx} className="text-[9px] px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20 font-medium">
-                {qr.title}
-              </span>
-            ))}
+        {/* ManyChat-style Interactive Buttons for send_dm */}
+        {type === "send_dm" && buttons.length > 0 && (
+          <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border/60">
+            <div className="text-[10px] text-muted font-medium mb-0.5 flex items-center justify-between">
+              <span>دکمه‌های تعاملی:</span>
+              <span className="text-[9px] text-blue-400 font-mono">{buttons.length}/3</span>
+            </div>
+            {buttons.map((btn: any, idx: number) => {
+              const btnId = btn.id || `btn_${idx + 1}`;
+              const isPostback = btn.type === "postback";
+              return (
+                <div
+                  key={btnId}
+                  className={`relative flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                    isPostback
+                      ? "bg-blue-500/10 border-blue-500/30 text-blue-300"
+                      : "bg-background/80 border-border text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 truncate max-w-[190px]">
+                    <span className="text-[11px]">{isPostback ? "🔘" : "🔗"}</span>
+                    <span className="truncate">{btn.title || `دکمه ${idx + 1}`}</span>
+                  </div>
+
+                  {/* Dedicated ManyChat Output Port for Postback Buttons */}
+                  {isPostback && (
+                    <div className="flex items-center">
+                      <Handle
+                        type="source"
+                        position={Position.Right}
+                        id={btnId}
+                        className="!w-3 !h-3 bg-blue-400 border-2 border-blue-900 hover:scale-125 transition-transform !-right-[18px]"
+                      />
+                      <span className="absolute -right-7 text-[8px] text-blue-400 font-mono font-bold select-none">
+                        #{idx + 1}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ManyChat-style Interactive Quick Reply Chips */}
+        {hasQuickReplies && (
+          <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border/60">
+            <div className="text-[10px] text-muted font-medium mb-0.5 flex items-center justify-between">
+              <span>گزینه‌های پاسخ سریع:</span>
+              <span className="text-[9px] text-teal-400 font-mono">{quickReplies.length}/13</span>
+            </div>
+            {quickReplies.map((qr: any, idx: number) => {
+              const handleId = qr.payload || qr.id || `chip_${idx + 1}`;
+              return (
+                <div
+                  key={qr.id || idx}
+                  className="relative flex items-center justify-between px-2.5 py-1.5 rounded-lg border bg-teal-500/10 border-teal-500/30 text-teal-300 text-xs font-medium"
+                >
+                  <div className="flex items-center gap-1.5 truncate max-w-[190px]">
+                    <span className="text-[11px]">💬</span>
+                    <span className="truncate">{qr.title || `گزینه ${idx + 1}`}</span>
+                  </div>
+
+                  {/* Dedicated ManyChat Output Port for each Quick Reply Chip */}
+                  <div className="flex items-center">
+                    <Handle
+                      type="source"
+                      position={Position.Right}
+                      id={handleId}
+                      className="!w-3 !h-3 bg-teal-400 border-2 border-teal-900 hover:scale-125 transition-transform !-right-[18px]"
+                    />
+                    <span className="absolute -right-7 text-[8px] text-teal-400 font-mono font-bold select-none">
+                      #{idx + 1}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -125,10 +205,15 @@ export function BaseCustomNode({ data, selected }: any) {
           <span className="absolute right-[-24px] top-[calc(66%-6px)] text-[9px] text-rose-400 font-bold">خیر</span>
         </>
       ) : (
+        /* Default output handle for sequential flows / fallback */
         <Handle 
           type="source" 
           position={Position.Right} 
-          className="w-3 h-3 bg-accent border-2 border-accent-foreground hover:scale-125 transition-transform" 
+          id="default"
+          className={`w-3 h-3 bg-accent border-2 border-accent-foreground hover:scale-125 transition-transform ${
+            hasPostbackButtons || hasQuickReplies ? "!top-3" : ""
+          }`}
+          title={hasPostbackButtons || hasQuickReplies ? "ادامه مسیر عمومی" : "خروجی نود"}
         />
       )}
     </div>

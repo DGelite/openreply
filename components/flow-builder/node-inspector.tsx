@@ -357,9 +357,15 @@ export default function NodeInspector({
                     type="button"
                     onClick={() => {
                       const current = config.buttons || [];
+                      const btnId = `btn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                       updateConfig("buttons", [
                         ...current,
-                        { type: "web_url", title: "مشاهده لینک", url: "https://" },
+                        {
+                          id: btnId,
+                          type: "postback",
+                          title: `گزینه ${current.length + 1}`,
+                          payload: `flow_btn:choice_${current.length + 1}`,
+                        },
                       ]);
                     }}
                     className="text-[11px] text-accent hover:underline font-medium"
@@ -369,46 +375,146 @@ export default function NodeInspector({
                 )}
               </div>
 
-              {(config.buttons || []).map((btn: any, idx: number) => (
-                <div key={idx} className="p-2.5 rounded border border-border bg-background/50 space-y-2 mb-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono text-muted">دکمه #{idx + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const updated = (config.buttons || []).filter((_: any, i: number) => i !== idx);
+              {(config.buttons || []).map((btn: any, idx: number) => {
+                const btnId = btn.id || `btn_${idx + 1}`;
+                const isPostback = btn.type === "postback";
+
+                // Check which target node is connected to this button
+                const connectedEdge = allEdges?.find(
+                  (e: any) =>
+                    (e.source === id || e.sourceNodeId === id) &&
+                    (e.sourceHandle === btn.id || (btn.payload && e.sourceHandle === btn.payload) || e.conditionBranch === btn.id)
+                );
+                const targetNode = connectedEdge
+                  ? allNodes.find((n: any) => n.id === (connectedEdge.target || connectedEdge.targetNodeId))
+                  : null;
+
+                return (
+                  <div key={btnId} className="p-2.5 rounded-lg border border-border bg-background/50 space-y-2 mb-2 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-muted">دکمه #{idx + 1}</span>
+                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold ${
+                          isPostback ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" : "bg-zinc-800 text-zinc-300"
+                        }`}>
+                          {isPostback ? "شاخه تعاملی ManyChat" : "لینک وب"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (connectedEdge && onDeleteEdge) {
+                            onDeleteEdge(connectedEdge.id);
+                          }
+                          const updated = (config.buttons || []).filter((_: any, i: number) => i !== idx);
+                          updateConfig("buttons", updated);
+                        }}
+                        className="text-[10px] text-rose-500 hover:underline"
+                      >
+                        حذف
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      placeholder="عنوان دکمه (حداکثر ۲۰ کاراکتر)"
+                      value={btn.title || ""}
+                      onChange={(e) => {
+                        const updated = [...(config.buttons || [])];
+                        updated[idx] = { ...updated[idx], id: btnId, title: e.target.value };
                         updateConfig("buttons", updated);
                       }}
-                      className="text-[10px] text-rose-500 hover:underline"
-                    >
-                      حذف
-                    </button>
+                      className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
+                    />
+
+                    {/* Button Type Selector */}
+                    <div className="flex gap-2 text-xs">
+                      <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-foreground">
+                        <input
+                          type="radio"
+                          name={`btn_type_${idx}`}
+                          checked={isPostback}
+                          onChange={() => {
+                            const updated = [...(config.buttons || [])];
+                            updated[idx] = {
+                              ...updated[idx],
+                              id: btnId,
+                              type: "postback",
+                              url: undefined,
+                              payload: btn.payload || `flow_btn:choice_${idx + 1}`,
+                            };
+                            updateConfig("buttons", updated);
+                          }}
+                          className="accent-accent"
+                        />
+                        <span>ایجاد شاخه (نود مقصد)</span>
+                      </label>
+
+                      <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-muted hover:text-foreground">
+                        <input
+                          type="radio"
+                          name={`btn_type_${idx}`}
+                          checked={btn.type === "web_url"}
+                          onChange={() => {
+                            const updated = [...(config.buttons || [])];
+                            updated[idx] = {
+                              ...updated[idx],
+                              id: btnId,
+                              type: "web_url",
+                              url: btn.url || "https://",
+                            };
+                            updateConfig("buttons", updated);
+                          }}
+                          className="accent-accent"
+                        />
+                        <span>لینک وبسایت (URL)</span>
+                      </label>
+                    </div>
+
+                    {isPostback ? (
+                      <div className="p-2 rounded bg-blue-500/5 border border-blue-500/20 text-[10px] space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-blue-400 font-semibold">وضعیت اتصال شاخه:</span>
+                          {targetNode ? (
+                            <span className="text-emerald-400 font-medium flex items-center gap-1">
+                              ✅ متصل به: {targetNode.title || targetNode.type}
+                            </span>
+                          ) : (
+                            <span className="text-amber-400 font-medium">⚠️ بدون اتصال</span>
+                          )}
+                        </div>
+                        <p className="text-muted leading-relaxed">
+                          {targetNode
+                            ? `هنگام کلیک کاربر در دایرکت، نود «${targetNode.title}» اجرا خواهد شد.`
+                            : "روی بوم، پورت این دکمه را بکشید و به نود مقصد وصل کنید."}
+                        </p>
+                        {connectedEdge && onDeleteEdge && (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteEdge(connectedEdge.id)}
+                            className="text-[10px] text-rose-400 hover:underline pt-0.5"
+                          >
+                            قطع اتصال این شاخه
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder="آدرس لینک (URL)"
+                        value={btn.url || ""}
+                        onChange={(e) => {
+                          const updated = [...(config.buttons || [])];
+                          updated[idx] = { ...updated[idx], id: btnId, url: e.target.value };
+                          updateConfig("buttons", updated);
+                        }}
+                        className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground font-mono text-left"
+                        dir="ltr"
+                      />
+                    )}
                   </div>
-                  <input
-                    type="text"
-                    placeholder="عنوان دکمه (حداکثر ۲۰ کاراکتر)"
-                    value={btn.title || ""}
-                    onChange={(e) => {
-                      const updated = [...(config.buttons || [])];
-                      updated[idx] = { ...updated[idx], title: e.target.value };
-                      updateConfig("buttons", updated);
-                    }}
-                    className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
-                  />
-                  <input
-                    type="text"
-                    placeholder="آدرس لینک (URL)"
-                    value={btn.url || ""}
-                    onChange={(e) => {
-                      const updated = [...(config.buttons || [])];
-                      updated[idx] = { ...updated[idx], url: e.target.value };
-                      updateConfig("buttons", updated);
-                    }}
-                    className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground font-mono text-left"
-                    dir="ltr"
-                  />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -520,9 +626,14 @@ export default function NodeInspector({
                   type="button"
                   onClick={() => {
                     const current = config.quickReplies || [];
+                    const qrId = `chip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                     updateConfig("quickReplies", [
                       ...current,
-                      { title: `گزینه ${current.length + 1}`, payload: `choice_${current.length + 1}` },
+                      {
+                        id: qrId,
+                        title: `گزینه ${current.length + 1}`,
+                        payload: `choice_${current.length + 1}`,
+                      },
                     ]);
                   }}
                   className="text-[11px] text-accent hover:underline font-medium"
@@ -532,31 +643,81 @@ export default function NodeInspector({
               )}
             </div>
 
-            {(config.quickReplies || []).map((qr: any, qrIdx: number) => (
-              <div key={qrIdx} className="flex items-center gap-2 p-2 rounded border border-border bg-background/50">
-                <input
-                  type="text"
-                  placeholder="عنوان دکمه (مثلا: لیست قیمت)"
-                  value={qr.title || ""}
-                  onChange={(e) => {
-                    const updated = [...(config.quickReplies || [])];
-                    updated[qrIdx] = { ...updated[qrIdx], title: e.target.value };
-                    updateConfig("quickReplies", updated);
-                  }}
-                  className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const updated = (config.quickReplies || []).filter((_: any, i: number) => i !== qrIdx);
-                    updateConfig("quickReplies", updated);
-                  }}
-                  className="text-xs text-rose-500 hover:bg-rose-500/10 p-1 rounded"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+            {(config.quickReplies || []).map((qr: any, qrIdx: number) => {
+              const qrId = qr.id || `chip_${qrIdx + 1}`;
+              const qrPayload = qr.payload || `choice_${qrIdx + 1}`;
+
+              // Check connected edge for this quick reply chip
+              const connectedEdge = allEdges?.find(
+                (e: any) =>
+                  (e.source === id || e.sourceNodeId === id) &&
+                  (e.sourceHandle === qrPayload || e.sourceHandle === qr.id || e.conditionBranch === qrPayload)
+              );
+              const targetNode = connectedEdge
+                ? allNodes.find((n: any) => n.id === (connectedEdge.target || connectedEdge.targetNodeId))
+                : null;
+
+              return (
+                <div key={qrId} className="p-2.5 rounded-lg border border-border bg-background/50 space-y-2 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-muted">گزینه #{qrIdx + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (connectedEdge && onDeleteEdge) {
+                          onDeleteEdge(connectedEdge.id);
+                        }
+                        const updated = (config.quickReplies || []).filter((_: any, i: number) => i !== qrIdx);
+                        updateConfig("quickReplies", updated);
+                      }}
+                      className="text-[10px] text-rose-500 hover:underline"
+                    >
+                      حذف
+                    </button>
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="عنوان دکمه (مثلا: کاتالوگ محصولات)"
+                    value={qr.title || ""}
+                    onChange={(e) => {
+                      const updated = [...(config.quickReplies || [])];
+                      updated[qrIdx] = { ...updated[qrIdx], id: qrId, payload: qrPayload, title: e.target.value };
+                      updateConfig("quickReplies", updated);
+                    }}
+                    className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
+                  />
+
+                  {/* Branch Connection Status */}
+                  <div className="p-2 rounded bg-teal-500/5 border border-teal-500/20 text-[10px] space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-teal-400 font-semibold">وضعیت اتصال شاخه:</span>
+                      {targetNode ? (
+                        <span className="text-emerald-400 font-medium flex items-center gap-1">
+                          ✅ متصل به: {targetNode.title || targetNode.type}
+                        </span>
+                      ) : (
+                        <span className="text-amber-400 font-medium">⚠️ بدون اتصال</span>
+                      )}
+                    </div>
+                    <p className="text-muted leading-relaxed">
+                      {targetNode
+                        ? `هنگام انتخاب این گزینه در دایرکت، نود «${targetNode.title}» اجرا خواهد شد.`
+                        : "روی بوم، پورت این گزینه را بکشید و به نود مقصد وصل کنید."}
+                    </p>
+                    {connectedEdge && onDeleteEdge && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteEdge(connectedEdge.id)}
+                        className="text-[10px] text-rose-400 hover:underline pt-0.5"
+                      >
+                        قطع اتصال این شاخه
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

@@ -1609,3 +1609,132 @@ async function handleFlowExecutionResults(
     }
   }
 }
+
+/**
+ * Executes a specific flow branch and dispatches resulting messages/actions to the user.
+ * Used for ManyChat button postbacks, quick replies, and nested node branching.
+ */
+export async function executeFlowBranchAndDispatch({
+  automation,
+  account,
+  accessToken,
+  userId,
+  username,
+  startNodeId,
+  clickedButtonId,
+  clickedButtonPayload,
+}: {
+  automation: any;
+  account: any;
+  accessToken: string;
+  userId: string;
+  username?: string;
+  startNodeId: string;
+  clickedButtonId?: string;
+  clickedButtonPayload?: string;
+}): Promise<FlowStepResult[]> {
+  if (!automation?.flowGraph) return [];
+  const graph = automation.flowGraph as unknown as FlowGraph;
+
+  const sendDirectMessage = async (_t: string, _accId: string, uId: string, msg: string) => {
+    return providerManager.sendTextMessage(account.id, uId, msg);
+  };
+
+  const sendDirectMessageWithLinkButton = async (
+    _t: string,
+    _accId: string,
+    uId: string,
+    msg: string,
+    lbl: string,
+    url: string
+  ) => {
+    return providerManager.sendTextMessage(account.id, uId, msg, {
+      buttons: [{ type: "web_url", title: lbl, url }],
+    });
+  };
+
+  const sendDirectMediaMessage = async (
+    _t: string,
+    _accId: string,
+    uId: string,
+    type: "image" | "video" | "audio",
+    url: string
+  ) => {
+    const attType = type === "audio" ? "voice" : type;
+    return providerManager.sendAttachment(account.id, uId, attType, url);
+  };
+
+  const sendDirectGenericTemplate = async (_t: string, _accId: string, uId: string, elements: any[]) => {
+    return providerManager.sendGenericTemplate(account.id, uId, elements);
+  };
+
+  const sendDirectQuickReplies = async (
+    _t: string,
+    _accId: string,
+    uId: string,
+    text: string,
+    quickReplies: any[]
+  ) => {
+    return providerManager.sendTextMessage(account.id, uId, text, {
+      quick_replies: quickReplies.map((qr) => ({
+        content_type: "text",
+        title: qr.title,
+        payload: qr.payload,
+      })),
+    });
+  };
+
+  const sendDirectMessageWithMultipleButtons = async (
+    _t: string,
+    _accId: string,
+    uId: string,
+    text: string,
+    buttons: any[]
+  ) => {
+    return providerManager.sendTextMessage(account.id, uId, text, {
+      buttons: buttons.map((b) => ({
+        type: b.type === "web_url" ? "web_url" : "postback",
+        title: b.title,
+        url: b.url,
+        payload: b.payload,
+      })),
+    });
+  };
+
+  const userTags = await getLeadTags(account.workspaceId, userId);
+
+  const graphResults = await executeFlowGraph(
+    graph,
+    {
+      workspaceId: account.workspaceId,
+      instagramAccountId: account.instagramId,
+      accountId: account.id,
+      automationId: automation.id,
+      userId,
+      username,
+      userTags,
+      clickedButtonId,
+      clickedButtonPayload,
+    },
+    startNodeId
+  );
+
+  await handleFlowExecutionResults(
+    graphResults,
+    automation,
+    account,
+    accessToken,
+    userId,
+    username,
+    {
+      sendDirectMessage,
+      sendDirectMessageWithLinkButton,
+      sendDirectMediaMessage,
+      sendDirectGenericTemplate,
+      sendDirectQuickReplies,
+      sendDirectMessageWithMultipleButtons,
+    }
+  );
+
+  return graphResults;
+}

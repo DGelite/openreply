@@ -156,12 +156,13 @@ function reactFlowNodeToDomainNode(n: Node): DomainNode {
   };
 }
 
-function domainEdgeToReactFlowEdge(e: DomainEdge): Edge {
+export function domainEdgeToReactFlowEdge(e: DomainEdge): Edge {
+  const sourceHandle = e.sourceHandle || (e.conditionBranch ? e.conditionBranch : undefined);
   return {
     id: e.id,
     source: e.sourceNodeId,
     target: e.targetNodeId,
-    sourceHandle: e.conditionBranch,
+    sourceHandle,
     type: "smoothstep",
     animated: true,
     style: { stroke: "var(--color-accent)", strokeWidth: 2, opacity: 0.8 },
@@ -169,12 +170,16 @@ function domainEdgeToReactFlowEdge(e: DomainEdge): Edge {
   };
 }
 
-function reactFlowEdgeToDomainEdge(e: Edge): DomainEdge {
+export function reactFlowEdgeToDomainEdge(e: Edge): DomainEdge {
   return {
     id: e.id,
     sourceNodeId: e.source,
     targetNodeId: e.target,
-    conditionBranch: e.sourceHandle as "yes" | "no" | undefined,
+    sourceHandle: e.sourceHandle || undefined,
+    conditionBranch:
+      e.sourceHandle === "yes" || e.sourceHandle === "no"
+        ? e.sourceHandle
+        : e.sourceHandle || undefined,
   };
 }
 

@@ -19,6 +19,8 @@ import {
 } from "./handlers/error-handler";
 import { handlePublicCommentReply } from "./handlers/public-reply";
 import { deliverPrivateReply, deliverPostbackReveal } from "./handlers/dm-delivery";
+import { executeFlowBranchAndDispatch } from "@/lib/automation/direct-message-processor";
+import type { FlowGraph } from "@/lib/flow/types";
 
 // Re-export error and alert helpers for complete backward compatibility
 export { formatError, recordProcessorFailure };
@@ -334,6 +336,150 @@ export async function processPostback(data: ProcessPostbackJob, attemptsMade: nu
   const { instagramAccountId, userId, payload, requeueAttempt = 0 } = data;
   const effectiveAttempts = Math.max(attemptsMade, requeueAttempt);
 
+  // ── 1. ManyChat Flow Button Postback Routing ─────────────────────────────
+  if (payload.startsWith("flow_btn:") || payload.startsWith("fb:")) {
+    const parts = payload.split(":");
+    // Expect: flow_btn:automationId:nodeId:buttonId
+    if (parts.length >= 4) {
+      const automationId = parts[1];
+      const nodeId = parts[2];
+      const buttonId = parts.slice(3).join(":");
+
+      const automation = await prisma.automation.findFirst({
+        where: { id: automationId, isActive: true },
+        include: {
+          instagramAccount: true,
+          workspace: true,
+          trackedLinks: {
+            select: { slug: true, destinationUrl: true },
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      });
+
+      if (!automation || automation.instagramAccount.instagramId !== instagramAccountId) {
+        return;
+      }
+
+      if (automation.flowGraph && typeof automation.flowGraph === "object") {
+        const graph = automation.flowGraph as unknown as FlowGraph;
+        const edge = graph.edges?.find(
+          (e) =>
+            e.sourceNodeId === nodeId &&
+            (e.sourceHandle === buttonId ||
+              e.sourceHandle === payload ||
+              e.conditionBranch === buttonId ||
+              e.conditionBranch === payload)
+        );
+
+        const targetNodeId =
+          edge?.targetNodeId ||
+          graph.edges?.find(
+            (e) => e.sourceNodeId === nodeId && (!e.sourceHandle || e.sourceHandle === "default")
+          )?.targetNodeId;
+
+        if (!targetNodeId) {
+          console.warn(`[Processor] No target branch found for button ${buttonId} in node ${nodeId}`);
+          return;
+        }
+
+        const isBoxApiPrimary =
+          automation.instagramAccount.orchestrationMode === "BOXAPI_PRIMARY" ||
+          (Boolean(automation.instagramAccount.boxApiKey) && !automation.instagramAccount.accessToken);
+
+        if (!automation.instagramAccount.accessToken && !isBoxApiPrimary) {
+          return;
+        }
+
+        let accessToken = "";
+        if (automation.instagramAccount.accessToken) {
+          try {
+            accessToken = safeDecryptToken(automation.instagramAccount.accessToken);
+          } catch {
+            if (!isBoxApiPrimary) return;
+          }
+        }
+
+        let rateLimit;
+        try {
+          rateLimit = await reserveDMSlot(
+            automation.instagramAccount.instagramId,
+            "DIRECT_MESSAGE",
+            effectiveAttempts
+          );
+        } catch (error) {
+          throw error;
+        }
+
+        if (rateLimit.shouldSkip) {
+          return;
+        }
+
+        if (rateLimit.shouldRequeue) {
+          await enqueueJob(
+            "process-postback",
+            { ...data, requeueAttempt: effectiveAttempts + 1 },
+            rateLimit.requeueDelayMs
+          );
+          return;
+        }
+
+        const usage = await reserveWorkspaceDMSend(automation.workspaceId);
+        if (!usage.allowed) {
+          return;
+        }
+
+        try {
+          await executeFlowBranchAndDispatch({
+            automation,
+            account: automation.instagramAccount,
+            accessToken,
+            userId,
+            startNodeId: targetNodeId,
+            clickedButtonId: buttonId,
+            clickedButtonPayload: payload,
+          });
+
+          const dedupeId = `flow_btn:${userId}:${nodeId}:${buttonId}`;
+          await prisma.dmLog.upsert({
+            where: {
+              automationId_commentId: { automationId: automation.id, commentId: dedupeId },
+            },
+            create: {
+              workspaceId: automation.workspaceId,
+              automationId: automation.id,
+              instagramAccountId: automation.instagramAccountId,
+              commenterId: userId,
+              commentText: `(button tap: ${buttonId})`,
+              commentId: dedupeId,
+              type: "DIRECT_MESSAGE",
+              status: "SENT",
+              dmSentAt: new Date(),
+            },
+            update: {
+              status: "SENT",
+              dmSentAt: new Date(),
+            },
+          });
+        } catch (error) {
+          await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
+          if (error instanceof RateLimitError) {
+            await enqueueJob(
+              "process-postback",
+              { ...data, requeueAttempt: effectiveAttempts + 1 },
+              error.retryAfterMs
+            );
+            return;
+          }
+          console.error(`[Processor] Error executing flow branch for postback ${payload}:`, error);
+          throw error;
+        }
+        return;
+      }
+    }
+  }
+
+  // ── 2. Existing Linear Reveal Postback Handling ──────────────────────────
   if (!payload.startsWith("reveal:")) return;
   const automationId = payload.slice("reveal:".length);
 

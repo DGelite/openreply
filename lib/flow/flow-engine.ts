@@ -25,6 +25,7 @@ export interface FlowExecutionContext {
   workspaceId: string;
   instagramAccountId: string;
   accountId?: string;
+  automationId?: string;
   userId: string;
   username?: string;
   userMessage?: string;
@@ -34,6 +35,7 @@ export interface FlowExecutionContext {
   userTags?: string[];
   selectedQuickReplyPayload?: string;
   clickedButtonPayload?: string;
+  clickedButtonId?: string;
 }
 
 
@@ -131,20 +133,62 @@ export async function executeFlowGraph(
 
     // Resumption check: If resuming at a quick_reply node because the user tapped a chip or responded
     if (currentNode.id === startNodeId && currentNode.type === "quick_reply") {
-      let outgoingEdge: FlowEdge | undefined;
-      if (context.selectedQuickReplyPayload) {
-        outgoingEdge = graph.edges.find(
+      const rawChips = (currentNode.data as any)?.config?.chips || (currentNode.data as any)?.config?.quickReplies || [];
+      const matchingChip = rawChips.find(
+        (c: any) =>
+          context.selectedQuickReplyPayload &&
+          (c.payload === context.selectedQuickReplyPayload ||
+            c.title === context.selectedQuickReplyPayload ||
+            c.id === context.selectedQuickReplyPayload)
+      );
+
+      if (matchingChip || context.selectedQuickReplyPayload) {
+        let outgoingEdge = graph.edges.find(
           (e) =>
             e.sourceNodeId === currentNode.id &&
-            (e.sourceHandle === context.selectedQuickReplyPayload ||
-              e.conditionBranch === context.selectedQuickReplyPayload)
+            ((context.selectedQuickReplyPayload &&
+              (e.sourceHandle === context.selectedQuickReplyPayload ||
+                e.conditionBranch === context.selectedQuickReplyPayload)) ||
+              (matchingChip &&
+                (e.sourceHandle === matchingChip.id ||
+                  e.sourceHandle === matchingChip.payload ||
+                  e.conditionBranch === matchingChip.id)))
         );
+        if (!outgoingEdge) {
+          outgoingEdge = graph.edges.find((e) => e.sourceNodeId === currentNode.id);
+        }
+        currentNodeId = outgoingEdge?.targetNodeId;
+        continue;
       }
-      if (!outgoingEdge) {
-        outgoingEdge = graph.edges.find((e) => e.sourceNodeId === currentNode.id);
+    }
+
+    // Resumption check: If resuming at a send_dm parent node because user clicked a postback button
+    if (currentNode.id === startNodeId && currentNode.type === "send_dm") {
+      const rawButtons = Array.isArray((currentNode.data as any)?.config?.buttons)
+        ? (currentNode.data as any).config.buttons
+        : [];
+      const hasMatchingButton = rawButtons.some(
+        (b: any) =>
+          (context.clickedButtonId && b.id === context.clickedButtonId) ||
+          (context.clickedButtonPayload &&
+            (b.payload === context.clickedButtonPayload || b.id === context.clickedButtonPayload))
+      );
+
+      if (hasMatchingButton) {
+        let outgoingEdge = graph.edges.find(
+          (e) =>
+            e.sourceNodeId === currentNode.id &&
+            ((context.clickedButtonId &&
+              (e.sourceHandle === context.clickedButtonId || e.conditionBranch === context.clickedButtonId)) ||
+              (context.clickedButtonPayload &&
+                (e.sourceHandle === context.clickedButtonPayload || e.conditionBranch === context.clickedButtonPayload)))
+        );
+        if (!outgoingEdge) {
+          outgoingEdge = graph.edges.find((e) => e.sourceNodeId === currentNode.id);
+        }
+        currentNodeId = outgoingEdge?.targetNodeId;
+        continue;
       }
-      currentNodeId = outgoingEdge?.targetNodeId;
-      continue;
     }
 
     // 1. Process Send DM Node
@@ -153,17 +197,53 @@ export async function executeFlowGraph(
       const rawMessage = config.message || config.messageText || "";
       const messageText = selectDmMessageVariation(rawMessage);
 
+      // Prepare buttons with stable IDs and payloads
+      const rawButtons = Array.isArray(config.buttons) ? config.buttons : [];
+      const buttons: FlowButton[] = rawButtons.map((b: any, bIdx: number) => {
+        const btnId = b.id || `btn_${bIdx + 1}`;
+        const btnType = b.type || (b.url ? "web_url" : "postback");
+        const payload =
+          b.payload ||
+          (btnType === "postback"
+            ? `flow_btn:${context.automationId || "flow"}:${currentNode.id}:${btnId}`
+            : undefined);
+        return {
+          id: btnId,
+          type: btnType,
+          title: b.title || `دکمه ${bIdx + 1}`,
+          url: b.url,
+          payload,
+        };
+      });
+
+      // Check if any postback button has an outgoing branch edge
+      const postbackButtonIds = new Set(
+        buttons.filter((b) => b.type === "postback").map((b) => b.id)
+      );
+      const hasBranchingButtons = graph.edges.some(
+        (e) =>
+          e.sourceNodeId === currentNode.id &&
+          e.sourceHandle &&
+          postbackButtonIds.has(e.sourceHandle)
+      );
+
       results.push({
         nodeId: currentNode.id,
         nodeType: "send_dm",
         actionTaken: "SEND_DM",
         dmMessageToSend: messageText,
-        buttons: config.buttons,
+        buttons: buttons.length > 0 ? buttons : undefined,
         linkButton:
           config.buttonLabel && config.buttonUrl
             ? { label: config.buttonLabel, url: config.buttonUrl }
             : undefined,
+        requiresInput: hasBranchingButtons ? "FLOW_NODE" : undefined,
       });
+
+      if (hasBranchingButtons) {
+        // ManyChat behavior: Pause traversal and wait for user's button postback click
+        break;
+      }
     }
 
     // 2. Process Send Media Node
@@ -403,7 +483,18 @@ export async function executeFlowGraph(
     // Find next edge based on selected handle/payload or default
     let outgoingEdge: FlowEdge | undefined;
 
-    if (context.selectedQuickReplyPayload) {
+    if (context.clickedButtonId || context.clickedButtonPayload) {
+      outgoingEdge = graph.edges.find(
+        (e) =>
+          e.sourceNodeId === currentNode.id &&
+          ((context.clickedButtonId &&
+            (e.sourceHandle === context.clickedButtonId || e.conditionBranch === context.clickedButtonId)) ||
+            (context.clickedButtonPayload &&
+              (e.sourceHandle === context.clickedButtonPayload || e.conditionBranch === context.clickedButtonPayload)))
+      );
+    }
+
+    if (!outgoingEdge && context.selectedQuickReplyPayload) {
       outgoingEdge = graph.edges.find(
         (e) =>
           e.sourceNodeId === currentNode.id &&

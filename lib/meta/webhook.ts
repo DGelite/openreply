@@ -214,7 +214,7 @@ export function parsePostbackEvents(
 
   for (const entry of payload.entry ?? []) {
     for (const messaging of entry.messaging ?? []) {
-      const postbackPayload = messaging.postback?.payload || messaging.message?.quick_reply?.payload;
+      const postbackPayload = messaging.postback?.payload;
       const userId = messaging.sender?.id;
       const accountId = entry.id ?? messaging.recipient?.id;
 
@@ -225,7 +225,7 @@ export function parsePostbackEvents(
         instagramAccountId: accountId,
         userId,
         payload: postbackPayload,
-        mid: messaging.postback?.mid || messaging.message?.mid,
+        mid: messaging.postback?.mid,
       });
     }
   }
