@@ -33,6 +33,7 @@ import { addTagToLead, removeTagFromLead, getLeadTags } from "@/lib/crm/tags";
 import { enrollUserInDrip, resumeExpiredDripEnrollmentsForUser } from "@/lib/drip/drip-engine";
 import { getAccountOperatingSchedule, isWithinOperatingHours } from "@/lib/scheduling/operating-schedule";
 import { extractPhoneNumber } from "@/lib/ai/phone-extractor";
+import { normalizeLeadData } from "@/lib/ai/lead-normalizer";
 import { syncLeadToWampCrm } from "./crm-sync";
 
 export interface IncomingDirectMessageEvent {
@@ -648,6 +649,14 @@ export async function processIncomingDirectMessage(
       },
     });
 
+    // Extract any co-occurring name or customer notes silently
+    const norm = await normalizeLeadData({
+      workspaceId: account.workspaceId,
+      userMessage: messageText,
+      expectedField: "phone",
+      mode: "SILENT_NORMALIZE_ONLY",
+    });
+
     await prisma.lead.upsert({
       where: { id: `lead_${instagramAccountId}_${userId}` },
       create: {
@@ -656,7 +665,9 @@ export async function processIncomingDirectMessage(
         instagramAccountId,
         userId,
         username,
+        name: norm.fullName || undefined,
         phone: phoneRes.phoneNumber,
+        phoneNotes: norm.notes || undefined,
         phoneConfidence: phoneRes.confidence,
         phoneOwner: phoneRes.owner,
         phoneRaw: phoneRes.rawInput || messageText,
@@ -666,6 +677,8 @@ export async function processIncomingDirectMessage(
       },
       update: {
         phone: phoneRes.phoneNumber,
+        name: norm.fullName || undefined,
+        phoneNotes: norm.notes || undefined,
         phoneConfidence: phoneRes.confidence,
         phoneOwner: phoneRes.owner,
         phoneRaw: phoneRes.rawInput || messageText,
@@ -684,7 +697,7 @@ export async function processIncomingDirectMessage(
     const existingLead = await prisma.lead.findUnique({
       where: { id: `lead_${instagramAccountId}_${userId}` },
     });
-    const leadFullName = existingLead?.name || (conversationState.metadata as any)?.name || undefined;
+    const leadFullName = existingLead?.name || norm.fullName || (conversationState.metadata as any)?.name || undefined;
 
     const isFlowActive = Boolean(
       activeAutomation &&
@@ -760,6 +773,7 @@ export async function processIncomingDirectMessage(
         confidence: phoneRes.confidence,
         owner: phoneRes.owner,
         is_correction: phoneRes.isCorrection,
+        lead_notes: norm.notes || undefined,
       },
     });
 
@@ -1000,13 +1014,25 @@ export async function processIncomingDirectMessage(
         const inputType = config.inputType || "phone";
 
         if (inputType === "phone") {
-          const validationMsg =
-            config.validationErrorMessage ||
-            "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:";
-          await sendDirectMessage(accessToken, instagramAccountId, userId, validationMsg);
-          return;
-        } else if (inputType === "name" || inputType === "text") {
-          // If confirmation step is enabled, ask for confirmation BEFORE saving to CRM
+          // AI Silent Normalizer with Fast-Path (0 tokens if clean phone, resilient to sentences/questions)
+          const norm = await normalizeLeadData({
+            workspaceId: account.workspaceId,
+            userMessage: messageText,
+            expectedField: "phone",
+            mode: "SILENT_NORMALIZE_ONLY",
+          });
+
+          if (!norm.phone) {
+            const validationMsg =
+              config.validationErrorMessage ||
+              "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:";
+            await sendDirectMessage(accessToken, instagramAccountId, userId, validationMsg);
+            return;
+          }
+
+          const cleanPhone = norm.phone;
+
+          // If confirmation step is enabled, ask for confirmation with clean phone!
           if (config.confirmBeforeSave) {
             const existingMeta =
               conversationState.metadata && typeof conversationState.metadata === "object"
@@ -1018,8 +1044,8 @@ export async function processIncomingDirectMessage(
                 metadata: {
                   ...existingMeta,
                   pendingConfirmation: {
-                    type: "name",
-                    value: messageText.trim(),
+                    type: "phone",
+                    value: cleanPhone,
                     nodeId: currentNode.id,
                   },
                 },
@@ -1028,8 +1054,8 @@ export async function processIncomingDirectMessage(
 
             const template =
               config.confirmMessage ||
-              "نام و نام خانوادگی شما «{value}» ثبت شد. آیا مورد تایید است؟";
-            const confirmMsg = template.replace(/{value}/g, messageText.trim());
+              "شماره همراه شما «{value}» ثبت شد. آیا مورد تایید است؟";
+            const confirmMsg = template.replace(/{value}/g, cleanPhone);
 
             await sendDirectQuickReplies(
               accessToken,
@@ -1052,24 +1078,113 @@ export async function processIncomingDirectMessage(
               instagramAccountId,
               userId,
               username,
-              name: messageText.trim(),
+              name: norm.fullName || undefined,
+              phone: cleanPhone,
+              phoneNotes: norm.notes || undefined,
+              provider: (account.primaryProvider || "META") as any,
+              phoneVerified: true,
+              crmSyncStatus: "PENDING",
+            },
+            update: {
+              phone: cleanPhone,
+              name: norm.fullName || undefined,
+              phoneNotes: norm.notes || undefined,
+              username: username ?? undefined,
+              phoneVerified: true,
+            },
+          });
+
+          void syncLeadToWampCrm({
+            leadId: `lead_${instagramAccountId}_${userId}`,
+            phone: cleanPhone,
+            full_name: norm.fullName || undefined,
+            username,
+            igsid: userId,
+            instagramAccountId,
+            provider: (account.primaryProvider || "META") as any,
+            lead_source: "openreply-flow-phone",
+            custom_data: norm.notes ? { lead_notes: norm.notes } : undefined,
+          });
+        } else if (inputType === "name" || inputType === "text") {
+          // AI Silent Normalizer with Fast-Path (0 tokens if clean name, resilient to sentences/questions)
+          const norm = await normalizeLeadData({
+            workspaceId: account.workspaceId,
+            userMessage: messageText,
+            expectedField: "name",
+            mode: "SILENT_NORMALIZE_ONLY",
+          });
+          const cleanName = norm.fullName || messageText.trim();
+
+          // If confirmation step is enabled, ask for confirmation BEFORE saving to CRM
+          if (config.confirmBeforeSave) {
+            const existingMeta =
+              conversationState.metadata && typeof conversationState.metadata === "object"
+                ? (conversationState.metadata as any)
+                : {};
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: {
+                metadata: {
+                  ...existingMeta,
+                  pendingConfirmation: {
+                    type: "name",
+                    value: cleanName,
+                    nodeId: currentNode.id,
+                  },
+                },
+              },
+            });
+
+            const template =
+              config.confirmMessage ||
+              "نام و نام خانوادگی شما «{value}» ثبت شد. آیا مورد تایید است؟";
+            const confirmMsg = template.replace(/{value}/g, cleanName);
+
+            await sendDirectQuickReplies(
+              accessToken,
+              instagramAccountId,
+              userId,
+              confirmMsg,
+              [
+                { content_type: "text", title: "✅ تایید", payload: "CONFIRM_LEAD_YES" },
+                { content_type: "text", title: "✏️ ویرایش", payload: "CONFIRM_LEAD_EDIT" },
+              ]
+            );
+            return;
+          }
+
+          await prisma.lead.upsert({
+            where: { id: `lead_${instagramAccountId}_${userId}` },
+            create: {
+              id: `lead_${instagramAccountId}_${userId}`,
+              workspaceId: account.workspaceId,
+              instagramAccountId,
+              userId,
+              username,
+              name: cleanName,
+              phone: norm.phone || undefined,
+              phoneNotes: norm.notes || undefined,
               provider: (account.primaryProvider || "META") as any,
               crmSyncStatus: "PENDING",
             },
             update: {
-              name: messageText.trim(),
+              name: cleanName,
+              phone: norm.phone || undefined,
+              phoneNotes: norm.notes || undefined,
               username: username ?? undefined,
             },
           });
 
           void syncLeadToWampCrm({
             leadId: `lead_${instagramAccountId}_${userId}`,
-            full_name: messageText.trim(),
+            full_name: cleanName,
+            phone: norm.phone || undefined,
             username,
             igsid: userId,
             instagramAccountId,
             provider: (account.primaryProvider || "META") as any,
             lead_source: "openreply-flow-name",
+            custom_data: norm.notes ? { lead_notes: norm.notes } : undefined,
           });
 
           const nextEdge = graph.edges?.find((e) => e.sourceNodeId === currentNode.id);

@@ -295,6 +295,17 @@ export default function CampaignsPage() {
               onChange={handleAccountChange}
             />
           )}
+          <a
+            href="/api/leads/export"
+            download
+            className="px-3.5 py-2 rounded border border-border text-sm font-medium text-foreground hover:bg-surface flex items-center gap-1.5 transition-colors"
+            title="دانلود فایل اکسل تمامی شماره‌ها و نام‌های لیدهای ثبت شده"
+          >
+            <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            خروجی لیدها (CSV)
+          </a>
           <Link
             href="/campaigns/import"
             className="px-4 py-2 rounded border border-border text-sm font-medium text-muted hover:text-foreground"

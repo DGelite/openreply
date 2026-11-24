@@ -189,28 +189,86 @@ export default function AiAgentAdminPage() {
 
             <div>
               <label className="block text-xs font-medium text-foreground mb-1">
-                {isFa ? "مدل (Model)" : "Model Name"}
+                {isFa ? "مدل هوش مصنوعی (انتخاب از لیست یا دستی)" : "AI Model Selection"}
               </label>
-              <input
-                type="text"
-                value={config?.model || "gemini-2.5-flash"}
-                onChange={(e) => setConfig((prev) => (prev ? { ...prev, model: e.target.value } : null))}
-                placeholder="gemini-2.5-flash / gpt-4o / deepseek-r1"
-                className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-              />
+              <div className="space-y-1.5">
+                <select
+                  value={
+                    [
+                      "gemini-3.5-flash-lite",
+                      "gemini-2.5-flash",
+                      "gemini-2.5-flash-lite",
+                      "gemini-2.5-pro",
+                      "gemini-2.0-flash",
+                      "gemini-2.0-flash-lite",
+                      "gemini-1.5-flash",
+                      "gemini-1.5-pro",
+                      "gpt-4o",
+                      "gpt-4o-mini",
+                      "deepseek-chat",
+                    ].includes(config?.model || "")
+                      ? config?.model
+                      : "custom"
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val !== "custom") {
+                      setConfig((prev) => (prev ? { ...prev, model: val } : null));
+                    }
+                  }}
+                  className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                >
+                  <optgroup label="مدل‌های رسمی Google Gemini">
+                    <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (فوق سریع و سبک)</option>
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (پیشنهادی - سریع و دقیق)</option>
+                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (استدلال پیشرفته)</option>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (نسل جدید چندوجهی)</option>
+                    <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (بسیار سبک و سریع)</option>
+                    <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  </optgroup>
+                  <optgroup label="سایر مدل‌ها">
+                    <option value="gpt-4o">OpenAI GPT-4o</option>
+                    <option value="gpt-4o-mini">OpenAI GPT-4o-mini</option>
+                    <option value="deepseek-chat">DeepSeek Chat</option>
+                  </optgroup>
+                  <option value="custom">سفارشی / نام دستی دیگر...</option>
+                </select>
+
+                <input
+                  type="text"
+                  value={config?.model || "gemini-2.5-flash"}
+                  onChange={(e) => setConfig((prev) => (prev ? { ...prev, model: e.target.value } : null))}
+                  placeholder="یا نام مدل دلخواه را دستی بنویسید (مثال: gemini-2.5-flash)"
+                  className="w-full rounded border border-border bg-surface px-3 py-1.5 text-xs text-foreground outline-none focus:border-accent"
+                />
+              </div>
             </div>
 
             <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-foreground mb-1">
-                {isFa ? "کلید اختصاصی API Key (اختیاری)" : "Custom API Key (Optional)"}
-              </label>
-              <input
-                type="password"
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-foreground">
+                  {isFa ? "کلیدهای API (پشتیبانی از چند کلید چرخشی - Multi-Key Failover Pool)" : "API Keys (Failover Pool)"}
+                </label>
+                <span className="text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-medium">
+                  سوئیچ خودکار در صورت خطا
+                </span>
+              </div>
+              <textarea
+                rows={2}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={isFa ? "در صورت خالی بودن از کلید عمومی پیش‌فرض سیستم استفاده می‌شود" : "Leave blank to use system default key"}
-                className="w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+                placeholder={
+                  isFa
+                    ? "یک یا چند API Key وارد کنید (هر کلید در یک خط یا با کاما جدا شود). در صورت خطای Rate Limit یا سهمیه، سیستم خودکار روی بعدی سوییچ می‌کند."
+                    : "Enter one or multiple API keys (one per line or comma-separated) for automated failover."
+                }
+                className="w-full rounded border border-border bg-surface px-3 py-2 text-xs font-mono text-foreground outline-none focus:border-accent"
               />
+              <p className="text-[11px] text-muted mt-1">
+                🛡️ ایمنی ۱۰۰٪ کاربر: در صورت بروز هرگونه خطای API یا اتمام اعتبار، به هیچ وجه ارور یا پیام نامربوطی به کاربر دایرکت ارسال نخواهد شد.
+              </p>
             </div>
           </div>
         </section>

@@ -13,6 +13,10 @@ function maskKey(key?: string | null): string {
   try {
     const dec = safeDecryptToken(key);
     if (!dec) return "";
+    const keys = dec.split(/[\r\n,;]+/).map((k) => k.trim()).filter(Boolean);
+    if (keys.length > 1) {
+      return `${keys.length} کلید فعال (استخر Failover)`;
+    }
     if (dec.length <= 8) return "••••••••";
     return `••••••••${dec.slice(-4)}`;
   } catch {

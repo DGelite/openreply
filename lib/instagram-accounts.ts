@@ -31,7 +31,13 @@ export async function getWorkspaceInstagramAccount(
 ) {
   if (instagramAccountId && instagramAccountId !== "all") {
     return prisma.instagramAccount.findFirst({
-      where: { id: instagramAccountId, workspaceId },
+      where: {
+        workspaceId,
+        OR: [
+          { id: instagramAccountId },
+          { instagramId: instagramAccountId },
+        ],
+      },
     });
   }
 

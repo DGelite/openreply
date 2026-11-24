@@ -1,58 +1,90 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
 
-export async function GET(request: Request) {
+export const dynamic = "force-dynamic";
+
+function escapeCsvField(field: unknown): string {
+  if (field === null || field === undefined) return '""';
+  const str = String(field);
+  // Prevent CSV injection (=, +, -, @ at start of field)
+  const safeStr = /^[=+\-@]/.test(str) ? `'${str}` : str;
+  return `"${safeStr.replace(/"/g, '""')}"`;
+}
+
+export async function GET(request: NextRequest) {
   try {
     const workspaceId = await getCurrentWorkspaceId();
     if (!workspaceId) {
-      return NextResponse.json({ error: "Unauthorized or Workspace not found" }, { status: 401 });
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
-    const format = searchParams.get("format") || "csv";
+    const automationId = searchParams.get("automationId");
+    const provider = searchParams.get("provider");
 
     const leads = await prisma.lead.findMany({
-      where: { workspaceId },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        phone: true,
-        createdAt: true,
-        sourceAutomationId: true,
+      where: {
+        workspaceId,
+        ...(automationId ? { sourceAutomationId: automationId } : {}),
+        ...(provider ? { provider: provider as any } : {}),
       },
+      include: {
+        automation: {
+          select: { name: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
     });
 
-    if (format === "json") {
-      return NextResponse.json({ leads });
-    }
+    const headers = [
+      "شناسه",
+      "نام و نام خانوادگی",
+      "شماره همراه",
+      "نام کاربری اینستاگرام",
+      "کمپین / فلو",
+      "توضیحات و یادداشت‌ها",
+      "سرویس‌دهنده",
+      "وضعیت CRM",
+      "شناسه CRM",
+      "تاریخ ثبت",
+    ];
 
-    // Generate CSV export
-    const headers = ["ID", "Username", "Email", "Phone", "Captured At", "Source Automation ID"];
-    const rows = leads.map((l) => [
-      l.id,
-      l.username || "",
-      l.email || "",
-      l.phone || "",
-      l.createdAt.toISOString(),
-      l.sourceAutomationId || "",
-    ]);
+    const rows = leads.map((l) => {
+      const createdAtJalali = new Date(l.createdAt).toLocaleString("fa-IR", {
+        timeZone: "Asia/Tehran",
+      });
 
-    const csvContent = [
-      headers.join(","),
-      ...rows.map((row) => row.map((val) => `"${String(val).replace(/"/g, '""')}"`).join(",")),
-    ].join("\n");
+      return [
+        escapeCsvField(l.id),
+        escapeCsvField(l.name || "—"),
+        escapeCsvField(l.phone || "—"),
+        escapeCsvField(l.username ? `@${l.username}` : "—"),
+        escapeCsvField(l.automation?.name || l.sourceAutomationId || "عمومی"),
+        escapeCsvField(l.phoneNotes || "—"),
+        escapeCsvField(l.provider),
+        escapeCsvField(l.crmSyncStatus),
+        escapeCsvField(l.crmLeadId || "—"),
+        escapeCsvField(createdAtJalali),
+      ].join(",");
+    });
 
-    return new Response(csvContent, {
+    // UTF-8 BOM (\uFEFF) ensures Persian text opens properly in Microsoft Excel
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\r\n");
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `openreply_leads_${dateStr}.csv`;
+
+    return new NextResponse(csvContent, {
+      status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="leads_${workspaceId}_${Date.now()}.csv"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
       },
     });
-  } catch (error) {
-    console.error("[Leads Export API Error]:", error);
-    return NextResponse.json({ error: "Failed to export leads" }, { status: 500 });
+  } catch (err) {
+    console.error("[Leads CSV Export] Error:", err);
+    return NextResponse.json({ success: false, error: "Failed to export leads" }, { status: 500 });
   }
 }

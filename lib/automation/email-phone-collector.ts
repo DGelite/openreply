@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/client";
 import { syncLeadToWampCrm } from "./crm-sync";
 import { SmsIrClient } from "@/lib/services/sms-ir-client";
 import { extractPhoneNumber, normalizeNumerals } from "@/lib/ai/phone-extractor";
+import { normalizeLeadData } from "@/lib/ai/lead-normalizer";
 
 /**
  * Validates an email address.
@@ -73,9 +74,19 @@ export async function processLeadStep(params: {
       };
     }
 
-    const name = trimmedMessage;
+    // AI Silent Normalizer with Fast-Path (0 tokens if clean, resilient to full sentences)
+    const norm = await normalizeLeadData({
+      workspaceId,
+      userMessage: trimmedMessage,
+      expectedField: "name",
+      mode: "SILENT_NORMALIZE_ONLY",
+    });
 
-    // Save lead name
+    const name = norm.fullName || trimmedMessage;
+    const phoneFromNorm = norm.phone;
+    const notesFromNorm = norm.notes;
+
+    // Save lead name and any co-extracted phone/notes
     await prisma.lead.upsert({
       where: { id: `lead_${instagramAccountId}_${userId}` },
       create: {
@@ -85,6 +96,8 @@ export async function processLeadStep(params: {
         userId,
         username,
         name,
+        phone: phoneFromNorm || undefined,
+        phoneNotes: notesFromNorm || undefined,
         sourceAutomationId: automationId,
         provider,
         externalUserId,
@@ -93,6 +106,8 @@ export async function processLeadStep(params: {
       update: {
         name,
         username: username ?? undefined,
+        phone: phoneFromNorm || undefined,
+        phoneNotes: notesFromNorm || undefined,
         sourceAutomationId: automationId ?? undefined,
         provider,
         externalUserId: externalUserId ?? undefined,
@@ -278,8 +293,16 @@ export async function processLeadStep(params: {
 
   // ── 2. Awaiting Phone Step ─────────────────────────────────────────────────
   if (currentStep === "AWAITING_PHONE") {
-    const extraction = extractPhoneNumber({ messageText: trimmedMessage });
-    if (!extraction.detected || !extraction.phoneNumber) {
+    // AI Silent Normalizer with Fast-Path (0 tokens if clean phone, resilient to sentences/questions)
+    const norm = await normalizeLeadData({
+      workspaceId,
+      userMessage: trimmedMessage,
+      expectedField: "phone",
+      mode: "SILENT_NORMALIZE_ONLY",
+    });
+
+    const phone = norm.phone;
+    if (!phone) {
       return {
         handled: true,
         success: false,
@@ -288,7 +311,8 @@ export async function processLeadStep(params: {
       };
     }
 
-    const phone = extraction.phoneNumber;
+    const notesFromNorm = norm.notes;
+    const nameFromNorm = norm.fullName;
 
     // Check if OTP verification is requested
     if (requireOtp) {
@@ -303,7 +327,9 @@ export async function processLeadStep(params: {
           instagramAccountId,
           userId,
           username,
+          name: nameFromNorm || undefined,
           phone,
+          phoneNotes: notesFromNorm || undefined,
           sourceAutomationId: automationId,
           provider,
           externalUserId,
@@ -316,6 +342,8 @@ export async function processLeadStep(params: {
         },
         update: {
           phone,
+          name: nameFromNorm || undefined,
+          phoneNotes: notesFromNorm || undefined,
           username: username ?? undefined,
           sourceAutomationId: automationId ?? undefined,
           provider,
@@ -429,7 +457,9 @@ export async function processLeadStep(params: {
         instagramAccountId,
         userId,
         username,
+        name: nameFromNorm || undefined,
         phone,
+        phoneNotes: notesFromNorm || undefined,
         sourceAutomationId: automationId,
         provider,
         externalUserId,
@@ -438,6 +468,8 @@ export async function processLeadStep(params: {
       },
       update: {
         phone,
+        name: nameFromNorm || undefined,
+        phoneNotes: notesFromNorm || undefined,
         username: username ?? undefined,
         sourceAutomationId: automationId ?? undefined,
         provider,
@@ -449,7 +481,7 @@ export async function processLeadStep(params: {
     void syncLeadToWampCrm({
       leadId: `lead_${instagramAccountId}_${userId}`,
       phone,
-      full_name: leadRecord?.name || undefined,
+      full_name: nameFromNorm || leadRecord?.name || undefined,
       username,
       igsid: userId,
       instagramAccountId,
@@ -457,6 +489,7 @@ export async function processLeadStep(params: {
       externalUserId,
       lead_source: `campaign:${automation?.name || automationId || "phone-collector"}`,
       auto_verify_and_book: Boolean(automation?.autoVerifyAndBook),
+      custom_data: notesFromNorm ? { lead_notes: notesFromNorm } : undefined,
     });
 
     await prisma.conversationState.upsert({

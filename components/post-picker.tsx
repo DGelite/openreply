@@ -45,8 +45,22 @@ export default function PostPicker({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [directInput, setDirectInput] = useState("");
   // The post currently hovered — its video (if it's a reel) plays a preview.
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  const handleDirectSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = directInput.trim();
+    if (!trimmed) return;
+
+    // Match shortcode from Instagram URL or take raw input as ID
+    const urlMatch = trimmed.match(/instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/i);
+    const shortcode = urlMatch ? urlMatch[1] : trimmed;
+    const finalUrl = trimmed.startsWith("http") ? trimmed : `https://www.instagram.com/p/${shortcode}/`;
+    onSelect(shortcode, finalUrl, undefined, `پست دستی: ${shortcode}`);
+    setDirectInput("");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -61,7 +75,6 @@ export default function PostPicker({
     // Show the cached library instantly (stale-while-revalidate), then refresh.
     const cacheKey = `ig-posts:${instagramAccountId ?? "default"}`;
     const cached = readCache<InstagramPost[]>(cacheKey, 15 * 60 * 1000);
-    // Hydrating state from cache is a legitimate effect use here.
     /* eslint-disable react-hooks/set-state-in-effect */
     if (cached.data) {
       setPosts(cached.data);
@@ -73,15 +86,15 @@ export default function PostPicker({
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
-        if (data.success) {
+        if (data.success && Array.isArray(data.data)) {
           setPosts(data.data);
           writeCache(cacheKey, data.data);
         } else if (!cached.data) {
-          setError(data.error ?? "Failed to load posts");
+          setError(data.error ?? "امکان بارگذاری زنده پست‌ها وجود ندارد");
         }
       })
       .catch(() => {
-        if (!cancelled && !cached.data) setError("Failed to load posts");
+        if (!cancelled && !cached.data) setError("خطا در برقراری ارتباط با سرویس پست‌ها");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -92,29 +105,56 @@ export default function PostPicker({
     };
   }, [instagramAccountId]);
 
-  if (loading) {
-    return (
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-        {[...Array(8)].map((_, i) => (
-          <div key={i} className="aspect-square rounded bg-zinc-800" />
-        ))}
+  const directInputSection = (
+    <div className="rounded-lg border border-border bg-surface/50 p-2.5 space-y-1.5">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-foreground">وارد کردن مستقیم لینک یا شناسه پست / ریلز:</span>
+        {selectedPostId && (
+          <span className="text-accent font-mono text-[11px] bg-accent/10 px-2 py-0.5 rounded">
+            انتخاب شده: {selectedPostId}
+          </span>
+        )}
       </div>
-    );
-  }
+      <form onSubmit={handleDirectSubmit} className="flex gap-2">
+        <input
+          value={directInput}
+          onChange={(e) => setDirectInput(e.target.value)}
+          placeholder="لینک پست یا ریلز (مثال: https://instagram.com/p/ABC...)"
+          className="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-foreground placeholder:text-zinc-500 focus:border-accent focus:outline-none"
+        />
+        <button
+          type="submit"
+          disabled={!directInput.trim()}
+          className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent/90 disabled:opacity-40"
+        >
+          ثبت پست
+        </button>
+      </form>
+    </div>
+  );
 
-  if (error) {
+  if (loading && posts.length === 0) {
     return (
-      <div className="text-center py-8">
-        <p className="text-sm text-muted">{error}</p>
-        <p className="text-xs text-zinc-500 mt-1">Connect your Instagram account first</p>
+      <div className="space-y-3">
+        {directInputSection}
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {[...Array(8)].map((_, i) => (
+            <div key={i} className="aspect-square rounded bg-zinc-800 animate-pulse" />
+          ))}
+        </div>
       </div>
     );
   }
 
   if (posts.length === 0) {
     return (
-      <div className="text-center py-8">
-        <p className="text-sm text-muted">No posts found</p>
+      <div className="space-y-3">
+        {directInputSection}
+        <div className="text-center py-6 border border-dashed border-border rounded-lg bg-surface/30">
+          <p className="text-xs text-muted">
+            {error || "پستی در گرید یافت نشد. می‌توانید با کادر بالا لینک پست یا ریلز را مستقیماً ثبت کنید."}
+          </p>
+        </div>
       </div>
     );
   }
@@ -126,26 +166,29 @@ export default function PostPicker({
     : posts;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      {directInputSection}
+
       <div className="flex items-center justify-between gap-2">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search your posts by caption…"
+          placeholder="جستجو در کپشن پست‌ها..."
           className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
         />
         <span className="shrink-0 text-xs text-muted">{posts.length}</span>
       </div>
+
       {visible.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted">
-          No posts match &ldquo;{query}&rdquo;
+          پستی با عبارت &ldquo;{query}&rdquo; یافت نشد.
         </p>
       ) : (
         <>
           {usedPostIds && Object.keys(usedPostIds).length > 0 && (
             <p className="flex items-center gap-2 px-1 text-xs text-muted">
               <span className="inline-block h-3 w-3 rounded-sm border-2 border-warning" />
-              Already used by another campaign
+              در کمپین دیگری استفاده شده است
             </p>
           )}
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto p-1">
@@ -158,64 +201,64 @@ export default function PostPicker({
               const showVideo =
                 isVideo && hoveredId === post.id && Boolean(post.media_url);
               return (
-          <button
-            key={post.id}
-            type="button"
-            onClick={() => onSelect(post.id, post.permalink, thumb, post.caption)}
-            onMouseEnter={() => setHoveredId(post.id)}
-            onMouseLeave={() =>
-              setHoveredId((cur) => (cur === post.id ? null : cur))
-            }
-            aria-pressed={isSelected}
-            title={isUsed ? `Already used by "${usedByName}"` : undefined}
-            className={`
-              relative aspect-square rounded overflow-hidden border-2
-              ${
-                isSelected
-                  ? "border-accent"
-                  : isUsed
-                    ? "border-warning hover:border-warning"
-                    : "border-border hover:border-border-hover"
-              }
-            `}
-          >
-            {thumb ? (
-              <img
-                src={thumb}
-                alt={post.caption?.slice(0, 50) ?? "Instagram post"}
-                referrerPolicy="no-referrer"
-                className={`w-full h-full object-cover ${isUsed ? "opacity-60" : ""}`}
-              />
-            ) : (
-              <div className="w-full h-full bg-surface flex items-center justify-center">
-                <span className="text-xs text-muted">No image</span>
-              </div>
-            )}
-            {showVideo && (
-              <video
-                src={post.media_url}
-                poster={thumb}
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="none"
-                className={`absolute inset-0 h-full w-full object-cover ${
-                  isUsed ? "opacity-60" : ""
-                }`}
-              />
-            )}
-            {isSelected && (
-              <span className="absolute bottom-0 inset-x-0 bg-accent text-white text-xs py-1">
-                Selected
-              </span>
-            )}
-            {isUsed && (
-              <span className="absolute bottom-0 inset-x-0 bg-warning text-background text-xs py-1 font-medium">
-                In use
-              </span>
-            )}
-          </button>
+                <button
+                  key={post.id}
+                  type="button"
+                  onClick={() => onSelect(post.id, post.permalink, thumb, post.caption)}
+                  onMouseEnter={() => setHoveredId(post.id)}
+                  onMouseLeave={() =>
+                    setHoveredId((cur) => (cur === post.id ? null : cur))
+                  }
+                  aria-pressed={isSelected}
+                  title={isUsed ? `در کمپین "${usedByName}" استفاده شده است` : undefined}
+                  className={`
+                    relative aspect-square rounded overflow-hidden border-2
+                    ${
+                      isSelected
+                        ? "border-accent"
+                        : isUsed
+                          ? "border-warning hover:border-warning"
+                          : "border-border hover:border-border-hover"
+                    }
+                  `}
+                >
+                  {thumb ? (
+                    <img
+                      src={thumb}
+                      alt={post.caption?.slice(0, 50) ?? "Instagram post"}
+                      referrerPolicy="no-referrer"
+                      className={`w-full h-full object-cover ${isUsed ? "opacity-60" : ""}`}
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-surface flex items-center justify-center">
+                      <span className="text-xs text-muted">بدون تصویر</span>
+                    </div>
+                  )}
+                  {showVideo && (
+                    <video
+                      src={post.media_url}
+                      poster={thumb}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      preload="none"
+                      className={`absolute inset-0 h-full w-full object-cover ${
+                        isUsed ? "opacity-60" : ""
+                      }`}
+                    />
+                  )}
+                  {isSelected && (
+                    <span className="absolute bottom-0 inset-x-0 bg-accent text-white text-xs py-1">
+                      انتخاب شده
+                    </span>
+                  )}
+                  {isUsed && (
+                    <span className="absolute bottom-0 inset-x-0 bg-warning text-background text-xs py-1 font-medium">
+                      در حال استفاده
+                    </span>
+                  )}
+                </button>
               );
             })}
           </div>
