@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        const model = targetModel || config?.openAiModel || "gpt-4o-mini";
+        const model = targetModel || config?.model || config?.openAiModel || "gpt-4o-mini";
         const baseUrl = directBaseUrl || config?.baseUrl || "https://api.openai.com/v1";
         engine = new OpenAIProvider(usedKey, model, baseUrl, "OPENAI");
         break;
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        const model = targetModel || config?.geminiModel || "gemini-2.5-flash";
+        const model = targetModel || config?.model || config?.geminiModel || "gemini-2.5-flash";
         const baseUrl = directBaseUrl || config?.baseUrl || undefined;
         engine = new GeminiProvider(usedKey, model, baseUrl);
         break;

@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // ── BoxAPI Provider Branch ──────────────────────────────────────────────
-    if (account.primaryProvider === "BOXAPI") {
+    if (account.primaryProvider === "BOXAPI" || account.orchestrationMode === "BOXAPI_PRIMARY") {
       const apiKey = account.boxApiKey || process.env.BOXAPI_API_KEY || "";
       const accountId = account.boxAccountId || process.env.BOXAPI_ACCOUNT_ID || account.instagramId;
       const baseUrl = account.boxApiBaseUrl || process.env.BOXAPI_BASE_URL || "https://api.sendbox.chat/api/v1";
@@ -42,16 +42,96 @@ export async function GET(request: NextRequest) {
         baseUrl,
       });
 
-      let posts: any[] = [];
+      const loadAll = request.nextUrl.searchParams.get("all") === "true";
+      const limitParam = request.nextUrl.searchParams.get("limit");
+      const parsedLimit = limitParam ? Number.parseInt(limitParam, 10) : 25;
+      const limit = loadAll ? 50 : Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 50) : 25;
+
+      interface BoxPostItem {
+        id: string;
+        media_type?: string;
+        media_url?: string;
+        permalink?: string;
+        thumbnail_url?: string;
+        caption?: string;
+        timestamp?: string;
+      }
+      interface BoxActionLogEntry {
+        event_id?: string;
+        event_type?: string;
+        account_id?: string;
+        payload?: {
+          success?: boolean;
+          result?: { data?: BoxPostItem[] };
+        };
+      }
+
+      let posts: unknown[] = [];
       try {
-        const resp = await client.officialPost<any>("/service/actions/list_posts", {
-          fields: ["id", "media_type", "media_url", "permalink", "caption", "timestamp"],
-          limit: 25,
+        // BoxAPI /service/actions/list_posts is async (202 Accepted) and writes results to /service/actions/logs
+        const resp = await client.officialPost<{
+          event_id?: string;
+          items?: BoxPostItem[];
+        } | BoxPostItem[]>("/service/actions/list_posts", {
+          fields: ["id", "media_type", "media_url", "permalink", "thumbnail_url", "caption", "timestamp"],
+          limit,
         });
+
         if (resp?.data && Array.isArray(resp.data)) {
           posts = resp.data;
-        } else if ((resp?.data as any)?.items && Array.isArray((resp.data as any).items)) {
-          posts = (resp.data as any).items;
+        } else if (resp?.data && !Array.isArray(resp.data) && Array.isArray(resp.data.items)) {
+          posts = resp.data.items;
+        } else {
+          const eventId = !Array.isArray(resp?.data) ? resp?.data?.event_id : undefined;
+
+          const extractPostsFromLog = (log?: BoxActionLogEntry): BoxPostItem[] | null => {
+            const arr = log?.payload?.result?.data;
+            return Array.isArray(arr) ? arr : null;
+          };
+
+          // Poll BoxAPI action logs briefly for the async list_posts completion
+          for (let attempt = 0; attempt < 8; attempt++) {
+            await new Promise((r) => setTimeout(r, attempt === 0 ? 700 : 600));
+            const logsResp = await client.officialGet<BoxActionLogEntry[]>("/service/actions/logs?limit=20").catch(() => null);
+            const logs = Array.isArray(logsResp?.data) ? logsResp.data : [];
+
+            if (eventId) {
+              const exactLog = logs.find((l) => l.event_id === eventId);
+              const extracted = extractPostsFromLog(exactLog);
+              if (extracted) {
+                posts = extracted;
+                break;
+              }
+            } else if (logs.length > 0) {
+              const recentLog = logs.find(
+                (l) =>
+                  l.event_type === "action.list_posts" &&
+                  l.payload?.success &&
+                  (!accountId || l.account_id === accountId)
+              );
+              const extracted = extractPostsFromLog(recentLog);
+              if (extracted) {
+                posts = extracted;
+                break;
+              }
+            }
+          }
+
+          // Fallback: if exact event_id didn't settle in 5s, serve latest successful list_posts log for this account
+          if (posts.length === 0) {
+            const logsResp = await client.officialGet<BoxActionLogEntry[]>("/service/actions/logs?limit=20").catch(() => null);
+            const logs = Array.isArray(logsResp?.data) ? logsResp.data : [];
+            const fallbackLog = logs.find(
+              (l) =>
+                l.event_type === "action.list_posts" &&
+                l.payload?.success &&
+                (!accountId || l.account_id === accountId)
+            );
+            const extracted = extractPostsFromLog(fallbackLog);
+            if (extracted) {
+              posts = extracted;
+            }
+          }
         }
       } catch (boxErr) {
         console.warn("[Instagram Posts] BoxAPI list_posts notice:", boxErr);
@@ -61,7 +141,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Meta Graph API Provider Branch ──────────────────────────────────────
-    let posts: any[] = [];
+    let posts: unknown[] = [];
     try {
       const accessToken = decryptToken(account.accessToken);
 

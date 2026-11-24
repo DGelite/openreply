@@ -1023,9 +1023,12 @@ export async function processIncomingDirectMessage(
           });
 
           if (!norm.phone) {
-            const validationMsg =
+            const baseValidationMsg =
               config.validationErrorMessage ||
               "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:";
+            const validationMsg = norm.replyMessageToUser
+              ? `${norm.replyMessageToUser}\n\n${baseValidationMsg}`
+              : baseValidationMsg;
             await sendDirectMessage(accessToken, instagramAccountId, userId, validationMsg);
             return;
           }

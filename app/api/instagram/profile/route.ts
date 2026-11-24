@@ -28,6 +28,26 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // BoxAPI accounts do not store AES-GCM encrypted Meta access tokens
+    if (
+      account.primaryProvider === "BOXAPI" ||
+      account.orchestrationMode === "BOXAPI_PRIMARY" ||
+      !account.accessToken ||
+      !account.accessToken.includes(":")
+    ) {
+      return NextResponse.json(
+        {
+          success: true,
+          data: {
+            username: account.username,
+            name: account.name ?? null,
+            profilePictureUrl: null,
+          },
+        },
+        { headers: { "Cache-Control": "private, max-age=300" } }
+      );
+    }
+
     const token = decryptToken(account.accessToken);
     const info = await getUserInfo(token);
     return NextResponse.json(
@@ -42,10 +62,17 @@ export async function GET(request: NextRequest) {
       { headers: { "Cache-Control": "private, max-age=300" } }
     );
   } catch (err) {
-    console.error("[Instagram Profile] Error:", err);
+    console.warn("[Instagram Profile] Graceful fallback:", err instanceof Error ? err.message : err);
     return NextResponse.json(
-      { success: false, error: "Failed to load profile" },
-      { status: 500 }
+      {
+        success: true,
+        data: {
+          username: account.username,
+          name: account.name ?? null,
+          profilePictureUrl: null,
+        },
+      },
+      { headers: { "Cache-Control": "private, max-age=60" } }
     );
   }
 }

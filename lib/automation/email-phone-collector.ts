@@ -136,9 +136,12 @@ export async function processLeadStep(params: {
         },
       });
 
-      const phonePrompt =
+      const phonePromptBase =
         automation.leadPromptPhone ||
         `ممنون ${name} عزیز! 🙏\nلطفاً شماره همراه خود را وارد کنید:`;
+      const phonePrompt = norm.replyMessageToUser
+        ? `${norm.replyMessageToUser}\n\n${phonePromptBase}`
+        : phonePromptBase;
 
       return {
         handled: true,
@@ -303,11 +306,14 @@ export async function processLeadStep(params: {
 
     const phone = norm.phone;
     if (!phone) {
+      const retryPrompt =
+        "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:";
       return {
         handled: true,
         success: false,
-        replyMessage:
-          "شماره همراه وارد شده معتبر نیست. لطفاً شماره خود را به صورت صحیح (مانند 09123456789) وارد کنید:",
+        replyMessage: norm.replyMessageToUser
+          ? `${norm.replyMessageToUser}\n\n${retryPrompt}`
+          : retryPrompt,
       };
     }
 

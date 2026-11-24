@@ -57,8 +57,19 @@ export default function PostPicker({
     // Match shortcode from Instagram URL or take raw input as ID
     const urlMatch = trimmed.match(/instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/i);
     const shortcode = urlMatch ? urlMatch[1] : trimmed;
-    const finalUrl = trimmed.startsWith("http") ? trimmed : `https://www.instagram.com/p/${shortcode}/`;
-    onSelect(shortcode, finalUrl, undefined, `پست دستی: ${shortcode}`);
+    const matchedPost = posts.find(
+      (p) => p.id === shortcode || (p.permalink && p.permalink.includes(shortcode))
+    );
+    const resolvedId = matchedPost?.id || shortcode;
+    const finalUrl =
+      matchedPost?.permalink ||
+      (trimmed.startsWith("http") ? trimmed : `https://www.instagram.com/p/${shortcode}/`);
+    onSelect(
+      resolvedId,
+      finalUrl,
+      matchedPost?.thumbnail_url ?? matchedPost?.media_url,
+      matchedPost?.caption ?? `پست دستی: ${shortcode}`
+    );
     setDirectInput("");
   };
 

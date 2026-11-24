@@ -145,7 +145,11 @@ export async function normalizeLeadData(
   }
 
   // 2. Fetch AI Config for Workspace
-  let aiConfig: any = null;
+  let aiConfig: {
+    isEnabled?: boolean;
+    systemPrompt?: string | null;
+    safetySettings?: unknown;
+  } | null = null;
   try {
     aiConfig = await prisma.aiConfig.findUnique({
       where: { workspaceId },
@@ -155,7 +159,12 @@ export async function normalizeLeadData(
     console.error("[LeadNormalizer] Error fetching AiConfig:", err);
   }
 
-  const leadNorm = (aiConfig?.safetySettings as any)?.leadNormalizer || {};
+  const safetyObj = (aiConfig?.safetySettings as Record<string, unknown> | null) || {};
+  const leadNorm = (safetyObj.leadNormalizer as {
+    enabled?: boolean;
+    mode?: "SILENT_NORMALIZE_ONLY" | "ASSISTANT_CO_PILOT";
+    prompt?: string;
+  }) || {};
   const isNormalizerEnabled = leadNorm.enabled ?? aiConfig?.isEnabled ?? true;
 
   // If normalizer or AI is disabled, execute safe heuristic fallback
@@ -213,7 +222,7 @@ export async function normalizeLeadData(
 
     const notes = parsed.notes ? String(parsed.notes).trim() : null;
     const replyMessageToUser =
-      mode === "ASSISTANT_CO_PILOT" && parsed.questionAnswer
+      effectiveMode === "ASSISTANT_CO_PILOT" && parsed.questionAnswer
         ? String(parsed.questionAnswer).trim()
         : null;
 

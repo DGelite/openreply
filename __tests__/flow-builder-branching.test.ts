@@ -268,7 +268,7 @@ describe("ManyChat-Style Multi-Button & Quick-Reply Branching Tests", () => {
             type: "send_dm",
             config: {
               message: "پیام خطی اول",
-              buttons: [{ type: "web_url", title: "مشاهده لینک", url: "https://example.com" }],
+              buttons: [{ type: "web_url", title: "مشاهده لینک", url: "https://example.com" }] as any,
             },
           },
         },

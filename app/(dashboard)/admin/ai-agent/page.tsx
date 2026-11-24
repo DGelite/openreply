@@ -94,13 +94,19 @@ export default function AiAgentAdminPage() {
       const res = await fetch("/api/admin/ai-config/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspaceId: config?.workspaceId || "main-workspace" }),
+        body: JSON.stringify({
+          workspaceId: config?.workspaceId || "main-workspace",
+          provider: config?.provider,
+          model: config?.model,
+          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        }),
       });
       const data = await res.json();
       if (data.success) {
+        const latency = data.latencyMs ?? data.latency ?? 0;
         setMessage({
           type: "success",
-          text: isFa ? `اتصال موفق! (مدل: ${data.model}, تاخیر: ${data.latency}ms)` : `Success! (Model: ${data.model}, Latency: ${data.latency}ms)`,
+          text: isFa ? `اتصال موفق! (مدل: ${data.model}, تاخیر: ${latency}ms)` : `Success! (Model: ${data.model}, Latency: ${latency}ms)`,
         });
       } else {
         setMessage({

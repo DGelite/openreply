@@ -168,4 +168,80 @@ describe("Modular AI Silent Normalizer & Fast-Path Engine", () => {
       expect(completion.text).toContain("علی");
     });
   });
+
+  describe("5. Workspace Settings Mode Control (Silent vs Co-Pilot)", () => {
+    it("should respect ASSISTANT_CO_PILOT mode configured in AiConfig safetySettings", async () => {
+      const { prisma } = await import("@/lib/db/client");
+      const { getAiEngine } = await import("@/lib/ai/factory");
+
+      (prisma.aiConfig.findUnique as any).mockResolvedValue({
+        isEnabled: true,
+        safetySettings: {
+          leadNormalizer: {
+            enabled: true,
+            mode: "ASSISTANT_CO_PILOT",
+            prompt: "custom prompt",
+          },
+        },
+      });
+
+      (getAiEngine as any).mockResolvedValue({
+        generateCompletion: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            firstName: "مهدی",
+            lastName: "کریمی",
+            phone: null,
+            notes: "پرسید هزینه چنده",
+            questionAnswer: "هزینه دوره در لینک ثبت‌نام درج شده است.",
+          }),
+        }),
+      });
+
+      const res = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "سلام هزینه چنده من مهدی کریمی هستم",
+        expectedField: "name",
+      });
+
+      expect(res.firstName).toBe("مهدی");
+      expect(res.lastName).toBe("کریمی");
+      expect(res.replyMessageToUser).toBe("هزینه دوره در لینک ثبت‌نام درج شده است.");
+    });
+
+    it("should return null replyMessageToUser in SILENT_NORMALIZE_ONLY mode even if AI sends questionAnswer", async () => {
+      const { prisma } = await import("@/lib/db/client");
+      const { getAiEngine } = await import("@/lib/ai/factory");
+
+      (prisma.aiConfig.findUnique as any).mockResolvedValue({
+        isEnabled: true,
+        safetySettings: {
+          leadNormalizer: {
+            enabled: true,
+            mode: "SILENT_NORMALIZE_ONLY",
+          },
+        },
+      });
+
+      (getAiEngine as any).mockResolvedValue({
+        generateCompletion: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            firstName: "مهدی",
+            lastName: "کریمی",
+            phone: null,
+            notes: "پرسید هزینه چنده",
+            questionAnswer: "این نباید ارسال شود",
+          }),
+        }),
+      });
+
+      const res = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "سلام هزینه چنده من مهدی کریمی هستم",
+        expectedField: "name",
+      });
+
+      expect(res.firstName).toBe("مهدی");
+      expect(res.replyMessageToUser).toBeNull();
+    });
+  });
 });

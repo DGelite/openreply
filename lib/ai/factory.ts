@@ -75,7 +75,7 @@ export async function getAiEngine(workspaceId: string): Promise<AiProvider> {
   switch (config.provider) {
     case "OPENAI": {
       const openAiKey = resolveKey(config.openAiApiKeyEncrypted, process.env.OPENAI_API_KEY) || legacyKey;
-      const openAiModel = config.openAiModel || config.model || "gpt-4o-mini";
+      const openAiModel = config.model || config.openAiModel || "gpt-4o-mini";
       const baseUrl = config.baseUrl || "https://api.openai.com/v1";
       engine = new OpenAIProvider(openAiKey, openAiModel, baseUrl, "OPENAI");
       break;
@@ -111,7 +111,7 @@ export async function getAiEngine(workspaceId: string): Promise<AiProvider> {
     case "GEMINI":
     default: {
       const geminiKey = resolveKey(config.geminiApiKeyEncrypted, process.env.GEMINI_API_KEY) || legacyKey;
-      const geminiModel = config.geminiModel || config.model || "gemini-2.5-flash";
+      const geminiModel = config.model || config.geminiModel || "gemini-2.5-flash";
       const baseUrl = config.baseUrl || undefined;
       engine = new GeminiProvider(geminiKey, geminiModel, baseUrl);
       break;
