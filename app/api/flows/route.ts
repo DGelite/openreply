@@ -73,6 +73,7 @@ export async function POST(request: Request) {
       STORY_REPLY: "STORY_REPLY",
       STORY_MENTION: "STORY_MENTION",
       STORY_REACTION: "STORY_REACTION",
+      WELCOME: "WELCOME",
     };
     const rawTrigger = triggerNode?.data?.config?.triggerType || "COMMENT_KEYWORD";
     const mappedTriggerType = triggerTypeMap[rawTrigger] || "COMMENT";

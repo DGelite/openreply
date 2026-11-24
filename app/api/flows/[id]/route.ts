@@ -65,6 +65,7 @@ export async function PUT(
       STORY_REPLY: "STORY_REPLY",
       STORY_MENTION: "STORY_MENTION",
       STORY_REACTION: "STORY_REACTION",
+      WELCOME: "WELCOME",
     };
 
     const updateData: Record<string, any> = {};

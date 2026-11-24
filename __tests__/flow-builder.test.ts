@@ -399,4 +399,127 @@ describe("Visual Flow Builder Engine Tests", () => {
     expect(phase2Results[2].nodeType).toBe("send_dm");
     expect(phase2Results[2].dmMessageToSend).toBe("وویس توضیحات ارسال شد! متشکریم.");
   });
+
+  it("should evaluate condition TEXT_CONTAINS with UI matchText field and handle smart_delay runtime vs simulation", async () => {
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: "trig",
+          type: "trigger",
+          title: "Trigger",
+          position: { x: 0, y: 0 },
+          data: { type: "trigger", config: { triggerType: "ALL", keywords: [], matchAnyWord: true, wholeWordMatch: false } },
+        },
+        {
+          id: "cond",
+          type: "condition",
+          title: "Check Price Word",
+          position: { x: 200, y: 0 },
+          data: { type: "condition", config: { ruleType: "TEXT_CONTAINS", matchText: "تعرفه" } as any },
+        },
+        {
+          id: "delay",
+          type: "smart_delay",
+          title: "Wait 10s",
+          position: { x: 400, y: 0 },
+          data: { type: "smart_delay", config: { delayAmount: 10, delayUnit: "seconds" } },
+        },
+        {
+          id: "after_delay",
+          type: "send_dm",
+          title: "After Delay DM",
+          position: { x: 600, y: 0 },
+          data: { type: "send_dm", config: { message: "پیام بعد از تاخیر!" } },
+        },
+      ],
+      edges: [
+        { id: "e1", sourceNodeId: "trig", targetNodeId: "cond" },
+        { id: "e2", sourceNodeId: "cond", targetNodeId: "delay", sourceHandle: "yes", conditionBranch: "yes" },
+        { id: "e3", sourceNodeId: "delay", targetNodeId: "after_delay" },
+      ],
+    };
+
+    // Live mode pauses at smart_delay and provides nextStepNodeId + delayMs for background scheduler
+    const liveResults = await executeFlowGraph(graph, {
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "u_1",
+      userMessage: "تعرفه چنده؟",
+      isSimulation: false,
+    });
+
+    expect(liveResults.map((r) => r.nodeType)).toEqual(["trigger", "condition", "smart_delay"]);
+    expect(liveResults[2].delayMs).toBe(10000);
+    expect(liveResults[2].nextStepNodeId).toBe("after_delay");
+
+    // Simulation mode continues past smart_delay so user sees full flow preview
+    const simResults = await executeFlowGraph(graph, {
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "u_1",
+      userMessage: "تعرفه چنده؟",
+      isSimulation: true,
+    });
+
+    expect(simResults.map((r) => r.nodeType)).toEqual(["trigger", "condition", "smart_delay", "send_dm"]);
+    expect(simResults[3].dmMessageToSend).toBe("پیام بعد از تاخیر!");
+  });
+
+  it("should normalize send_carousel UI elements and resume quick_reply by userMessage title fallback", async () => {
+    const graph: FlowGraph = {
+      nodes: [
+        {
+          id: "qr",
+          type: "quick_reply",
+          title: "Menu",
+          position: { x: 0, y: 0 },
+          data: {
+            type: "quick_reply",
+            config: {
+              messageText: "انتخاب کنید:",
+              quickReplies: [{ id: "c1", title: "محصولات", payload: "products" }],
+            } as any,
+          },
+        },
+        {
+          id: "carousel",
+          type: "send_carousel",
+          title: "Products",
+          position: { x: 200, y: 0 },
+          data: {
+            type: "send_carousel",
+            config: {
+              elements: [
+                {
+                  title: "دوره اصلی",
+                  subtitle: "پکیج کامل",
+                  image_url: "https://example.com/img.jpg",
+                  buttons: [{ type: "web_url", title: "مشاهده", url: "https://example.com/buy" }],
+                },
+              ],
+            } as any,
+          },
+        },
+      ],
+      edges: [
+        { id: "e1", sourceNodeId: "qr", targetNodeId: "carousel", sourceHandle: "products" },
+      ],
+    };
+
+    const res = await executeFlowGraph(
+      graph,
+      {
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_1",
+        userId: "u_1",
+        userMessage: "محصولات",
+      },
+      "qr"
+    );
+
+    expect(res.length).toBe(1);
+    expect(res[0].nodeType).toBe("send_carousel");
+    expect(res[0].carouselToSend?.cards[0].imageUrl).toBe("https://example.com/img.jpg");
+    expect(res[0].carouselToSend?.cards[0].buttons[0].url).toBe("https://example.com/buy");
+  });
 });

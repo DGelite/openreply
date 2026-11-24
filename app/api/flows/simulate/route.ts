@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       userMessage: testMessage || "سلام",
       hasEmail: false,
       hasPhone: false,
+      isSimulation: true,
     });
 
     return NextResponse.json({ success: true, results });

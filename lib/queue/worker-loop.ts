@@ -2,7 +2,7 @@ import { dequeueBatch, completeJob, failJob, POSTBACK_JOB_NAME, queueEvents } fr
 import { processComment, processPostback, recordProcessorFailure } from "./processor";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
-import { processIncomingDirectMessage } from "@/lib/automation/direct-message-processor";
+import { processIncomingDirectMessage, processResumeFlowNode } from "@/lib/automation/direct-message-processor";
 import { processDueDripEnrollments } from "@/lib/drip/drip-engine";
 import os from "node:os";
 
@@ -211,6 +211,9 @@ async function dispatchJob(
   switch (name) {
     case POSTBACK_JOB_NAME:
       return processPostback(payload, attempts);
+
+    case "resume-flow-node":
+      return processResumeFlowNode(payload);
 
     case "process-dm":
     case "process-reaction":

@@ -36,6 +36,7 @@ export interface FlowExecutionContext {
   selectedQuickReplyPayload?: string;
   clickedButtonPayload?: string;
   clickedButtonId?: string;
+  isSimulation?: boolean;
 }
 
 
@@ -53,7 +54,7 @@ export function evaluateConditionNode(
 
   const ruleType = config.ruleType || config.variable;
   const targetTag = (config.tagName || config.value || "").trim().toLowerCase();
-  const textVal = config.textValue || config.value || "";
+  const textVal = config.matchText || config.textValue || config.value || "";
 
   switch (ruleType) {
     case "EMAIL_PROVIDED":
@@ -134,25 +135,27 @@ export async function executeFlowGraph(
     // Resumption check: If resuming at a quick_reply node because the user tapped a chip or responded
     if (currentNode.id === startNodeId && currentNode.type === "quick_reply") {
       const rawChips = (currentNode.data as any)?.config?.chips || (currentNode.data as any)?.config?.quickReplies || [];
+      const candidateInput = context.selectedQuickReplyPayload || context.userMessage;
       const matchingChip = rawChips.find(
         (c: any) =>
-          context.selectedQuickReplyPayload &&
-          (c.payload === context.selectedQuickReplyPayload ||
-            c.title === context.selectedQuickReplyPayload ||
-            c.id === context.selectedQuickReplyPayload)
+          candidateInput &&
+          (c.payload === candidateInput ||
+            c.title === candidateInput ||
+            c.id === candidateInput)
       );
 
       if (matchingChip || context.selectedQuickReplyPayload) {
         let outgoingEdge = graph.edges.find(
           (e) =>
             e.sourceNodeId === currentNode.id &&
-            ((context.selectedQuickReplyPayload &&
-              (e.sourceHandle === context.selectedQuickReplyPayload ||
-                e.conditionBranch === context.selectedQuickReplyPayload)) ||
+            ((candidateInput &&
+              (e.sourceHandle === candidateInput ||
+                e.conditionBranch === candidateInput)) ||
               (matchingChip &&
                 (e.sourceHandle === matchingChip.id ||
                   e.sourceHandle === matchingChip.payload ||
-                  e.conditionBranch === matchingChip.id)))
+                  e.conditionBranch === matchingChip.id ||
+                  e.conditionBranch === matchingChip.payload)))
         );
         if (!outgoingEdge) {
           outgoingEdge = graph.edges.find((e) => e.sourceNodeId === currentNode.id);
@@ -316,9 +319,13 @@ export async function executeFlowGraph(
 
     // 5. Process Condition Node
     else if (currentNode.type === "condition" && currentNode.data.type === "condition") {
+      const condCfg = currentNode.data.config as any;
+      const rule = condCfg.ruleType || condCfg.variable;
+
       if (
-        (currentNode.data.config as any).variable === "is_following" &&
-        context.isFollowing === undefined
+        rule === "is_following" &&
+        context.isFollowing === undefined &&
+        !context.isSimulation
       ) {
         try {
           const account = context.accountId
@@ -338,6 +345,23 @@ export async function executeFlowGraph(
         }
       }
 
+      if (
+        !context.isSimulation &&
+        ((rule === "EMAIL_PROVIDED" || rule === "has_email") && context.hasEmail === undefined ||
+          (rule === "PHONE_PROVIDED" || rule === "has_phone") && context.hasPhone === undefined)
+      ) {
+        try {
+          const lead = await prisma.lead.findUnique({
+            where: { id: `lead_${context.instagramAccountId}_${context.userId}` },
+            select: { email: true, phone: true },
+          });
+          if (context.hasEmail === undefined) context.hasEmail = Boolean(lead?.email);
+          if (context.hasPhone === undefined) context.hasPhone = Boolean(lead?.phone);
+        } catch {
+          // Ignore DB lookup errors in unit tests
+        }
+      }
+
       const conditionPassed = evaluateConditionNode(currentNode, context);
       const targetBranch = conditionPassed ? "yes" : "no";
 
@@ -348,10 +372,12 @@ export async function executeFlowGraph(
       });
 
       const nextEdge = graph.edges.find(
-        (e) => e.sourceNodeId === currentNode.id && e.conditionBranch === targetBranch
+        (e) =>
+          e.sourceNodeId === currentNode.id &&
+          (e.conditionBranch === targetBranch || e.sourceHandle === targetBranch)
       );
       const fallbackEdge = graph.edges.find(
-        (e) => e.sourceNodeId === currentNode.id && !e.conditionBranch
+        (e) => e.sourceNodeId === currentNode.id && !e.conditionBranch && !e.sourceHandle
       );
       currentNodeId = nextEdge?.targetNodeId ?? fallbackEdge?.targetNodeId;
       continue;
@@ -433,7 +459,7 @@ export async function executeFlowGraph(
         nodeType: "handover_to_human",
         actionTaken: "HANDOVER_TO_HUMAN",
         isHumanHandover: true,
-        dmMessageToSend: config.notificationMessage || config.reason,
+        dmMessageToSend: config.notificationMessage || undefined,
       });
       break;
     }
@@ -441,15 +467,40 @@ export async function executeFlowGraph(
     // 11. Process Webhook Action Node
     else if (currentNode.type === "webhook_action" && currentNode.data.type === "webhook_action") {
       const config = currentNode.data.config;
-      void dispatchOutboundLeadWebhook(
-        {
-          username: context.username,
-          igsid: context.userId,
-          workspaceId: context.workspaceId,
-          customData: { flowNodeId: currentNode.id, message: context.userMessage },
-        },
-        config.webhookUrl
-      );
+      const targetUrl = (config.webhookUrl || "").trim();
+      const isPlaceholder = !targetUrl || targetUrl.includes("hooks.zapier.com/...");
+
+      if (!context.isSimulation && !isPlaceholder) {
+        let extraData: Record<string, unknown> = {};
+        if (config.customPayloadJson) {
+          try {
+            extraData = JSON.parse(config.customPayloadJson);
+          } catch {
+            extraData = { rawPayload: config.customPayloadJson };
+          }
+        }
+
+        if (config.httpMethod === "GET") {
+          const url = new URL(targetUrl);
+          url.searchParams.set("igsid", context.userId);
+          if (context.username) url.searchParams.set("username", context.username);
+          void fetch(url.toString(), { method: "GET", signal: AbortSignal.timeout(5000) }).catch(() => {});
+        } else {
+          void dispatchOutboundLeadWebhook(
+            {
+              username: context.username,
+              igsid: context.userId,
+              workspaceId: context.workspaceId,
+              customData: {
+                flowNodeId: currentNode.id,
+                message: context.userMessage,
+                ...extraData,
+              },
+            },
+            targetUrl
+          );
+        }
+      }
 
       results.push({
         nodeId: currentNode.id,
@@ -461,23 +512,45 @@ export async function executeFlowGraph(
     // 12. Process Smart Delay Node
     else if (currentNode.type === "smart_delay" && currentNode.data.type === "smart_delay") {
       const config = currentNode.data.config as any;
+      let delayMs = 0;
       let delayMinutes = config.delayMinutes;
-      if (!delayMinutes && config.delayAmount) {
+
+      if (config.delayAmount) {
         const unit = config.delayUnit || "minutes";
-        const amount = Number(config.delayAmount) || 5;
-        if (unit === "hours") delayMinutes = amount * 60;
-        else if (unit === "days") delayMinutes = amount * 1440;
-        else if (unit === "seconds") delayMinutes = Math.max(1, Math.ceil(amount / 60));
-        else delayMinutes = amount;
+        const amount = Math.max(1, Number(config.delayAmount) || 5);
+        if (unit === "seconds") {
+          delayMs = amount * 1000;
+          delayMinutes = Math.max(1, Math.ceil(amount / 60));
+        } else if (unit === "hours") {
+          delayMs = amount * 60 * 60 * 1000;
+          delayMinutes = amount * 60;
+        } else if (unit === "days") {
+          delayMs = amount * 24 * 60 * 60 * 1000;
+          delayMinutes = amount * 1440;
+        } else {
+          delayMs = amount * 60 * 1000;
+          delayMinutes = amount;
+        }
+      } else {
+        delayMinutes = Math.max(1, Number(delayMinutes) || 5);
+        delayMs = delayMinutes * 60 * 1000;
       }
-      delayMinutes = delayMinutes || 5;
+
+      const nextEdge = graph.edges.find((e) => e.sourceNodeId === currentNode.id);
 
       results.push({
         nodeId: currentNode.id,
         nodeType: "smart_delay",
         actionTaken: `SMART_DELAY_${delayMinutes}_MINUTES`,
         delayMinutes,
+        delayMs,
+        nextStepNodeId: nextEdge?.targetNodeId,
       });
+
+      // In live runtime, pause here so the worker schedules the remaining branch after delayMs
+      if (!context.isSimulation && nextEdge?.targetNodeId) {
+        break;
+      }
     }
 
     // Find next edge based on selected handle/payload or default

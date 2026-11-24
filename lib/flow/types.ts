@@ -93,9 +93,13 @@ export interface QuickReplyNodeData {
 }
 
 export interface ConditionNodeData {
-  variable: "has_email" | "has_phone" | "has_tag" | "keyword_match" | "is_following" | "custom";
-  operator: "equals" | "contains" | "is_not_empty";
+  variable?: "has_email" | "has_phone" | "has_tag" | "keyword_match" | "is_following" | "custom";
+  operator?: "equals" | "contains" | "is_not_empty";
   value?: string;
+  ruleType?: "HAS_TAG" | "TEXT_CONTAINS" | "EMAIL_PROVIDED" | "PHONE_PROVIDED" | "is_following" | string;
+  tagName?: string;
+  matchText?: string;
+  textValue?: string;
 }
 
 export interface CollectInputNodeData {
@@ -128,6 +132,7 @@ export interface AiReplyNodeData {
 
 export interface HandoverToHumanNodeData {
   notificationMessage?: string;
+  reason?: string;
 }
 
 export interface WebhookActionNodeData {
@@ -137,7 +142,9 @@ export interface WebhookActionNodeData {
 }
 
 export interface SmartDelayNodeData {
-  delayMinutes: number;
+  delayMinutes?: number;
+  delayAmount?: number;
+  delayUnit?: "seconds" | "minutes" | "hours" | "days";
 }
 
 export type FlowNodeData =
@@ -196,6 +203,7 @@ export interface FlowStepResult {
   aiInstruction?: string;
   isHumanHandover?: boolean;
   delayMinutes?: number;
+  delayMs?: number;
 }
 
 export interface FlowRecord {

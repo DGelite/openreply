@@ -600,6 +600,73 @@ export default function NodeInspector({
                   className="w-full rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground font-mono text-left"
                   dir="ltr"
                 />
+
+                {/* Card Buttons */}
+                <div className="pt-1.5 border-t border-border/60 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-muted">دکمه‌های کارت (تا ۳ دکمه):</span>
+                    {(card.buttons?.length || 0) < 3 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = [...(config.elements || [])];
+                          const curBtns = updated[cardIdx].buttons || [];
+                          updated[cardIdx] = {
+                            ...updated[cardIdx],
+                            buttons: [...curBtns, { type: "web_url", title: "مشاهده", url: "https://" }],
+                          };
+                          updateConfig("elements", updated);
+                        }}
+                        className="text-[10px] text-accent hover:underline"
+                      >
+                        + دکمه
+                      </button>
+                    )}
+                  </div>
+                  {(card.buttons || []).map((btn: any, bIdx: number) => (
+                    <div key={bIdx} className="flex gap-1.5 items-center">
+                      <input
+                        type="text"
+                        placeholder="عنوان دکمه"
+                        value={btn.title || ""}
+                        onChange={(e) => {
+                          const updated = [...(config.elements || [])];
+                          const btns = [...(updated[cardIdx].buttons || [])];
+                          btns[bIdx] = { ...btns[bIdx], title: e.target.value };
+                          updated[cardIdx] = { ...updated[cardIdx], buttons: btns };
+                          updateConfig("elements", updated);
+                        }}
+                        className="w-24 rounded border border-border bg-background px-2 py-1 text-[11px] text-foreground"
+                      />
+                      <input
+                        type="url"
+                        placeholder="https://..."
+                        value={btn.url || ""}
+                        onChange={(e) => {
+                          const updated = [...(config.elements || [])];
+                          const btns = [...(updated[cardIdx].buttons || [])];
+                          btns[bIdx] = { ...btns[bIdx], type: "web_url", url: e.target.value };
+                          updated[cardIdx] = { ...updated[cardIdx], buttons: btns };
+                          updateConfig("elements", updated);
+                        }}
+                        className="flex-1 rounded border border-border bg-background px-2 py-1 text-[11px] text-foreground font-mono text-left"
+                        dir="ltr"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = [...(config.elements || [])];
+                          const btns = (updated[cardIdx].buttons || []).filter((_: any, i: number) => i !== bIdx);
+                          updated[cardIdx] = { ...updated[cardIdx], buttons: btns };
+                          updateConfig("elements", updated);
+                        }}
+                        className="text-[10px] text-rose-400 px-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -784,7 +851,17 @@ export default function NodeInspector({
         {type === "handover_to_human" && (
           <div className="space-y-3">
             <div>
-              <label className="text-xs font-medium text-muted block mb-1">دلیل انتقال به پشتیبان</label>
+              <label className="text-xs font-medium text-muted block mb-1">پیام اطلاع‌رسانی به مشتری در دایرکت (اختیاری)</label>
+              <textarea
+                rows={2}
+                placeholder="درخواست شما به کارشناس پشتیبانی ارجاع داده شد. به زودی پاسخگوی شما هستیم 🙏"
+                value={config.notificationMessage || ""}
+                onChange={(e) => updateConfig("notificationMessage", e.target.value)}
+                className="w-full rounded-md border border-border bg-background p-2 text-xs text-foreground resize-y"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">دلیل ثبت شده در پنل برای پشتیبان</label>
               <input
                 type="text"
                 placeholder="درخواست مکالمه انسانی توسط مشتری"
@@ -810,10 +887,11 @@ export default function NodeInspector({
                 <option value="TEXT_CONTAINS">متن پیام حاوی عبارت باشد</option>
                 <option value="EMAIL_PROVIDED">ایمیل ثبت شده باشد</option>
                 <option value="PHONE_PROVIDED">شماره موبایل ثبت شده باشد</option>
+                <option value="is_following">فالوور پیج باشد (Is Following)</option>
               </select>
             </div>
 
-            {config.ruleType === "HAS_TAG" && (
+            {(!config.ruleType || config.ruleType === "HAS_TAG") && (
               <div>
                 <label className="text-xs font-medium text-muted block mb-1">نام برچسب مورد نظر</label>
                 <input
@@ -839,6 +917,22 @@ export default function NodeInspector({
                 />
               </div>
             )}
+
+            <div className="p-2 rounded bg-purple-500/5 border border-purple-500/20 text-[10px] text-muted space-y-1">
+              <div className="font-semibold text-purple-400">وضعیت اتصال شاخه‌های شرط:</div>
+              <div>
+                • شاخه <span className="text-emerald-400 font-bold">بله (Yes)</span>:{" "}
+                {allEdges?.find((e: any) => (e.source === id || e.sourceNodeId === id) && (e.sourceHandle === "yes" || e.conditionBranch === "yes"))
+                  ? "✅ متصل"
+                  : "⚠️ بدون اتصال"}
+              </div>
+              <div>
+                • شاخه <span className="text-rose-400 font-bold">خیر (No)</span>:{" "}
+                {allEdges?.find((e: any) => (e.source === id || e.sourceNodeId === id) && (e.sourceHandle === "no" || e.conditionBranch === "no"))
+                  ? "✅ متصل"
+                  : "⚠️ بدون اتصال"}
+              </div>
+            </div>
           </div>
         )}
 
@@ -859,7 +953,7 @@ export default function NodeInspector({
               <div className="flex-1">
                 <label className="text-xs font-medium text-muted block mb-1">واحد زمان</label>
                 <select
-                  value={config.delayUnit || "seconds"}
+                  value={config.delayUnit || "minutes"}
                   onChange={(e) => updateConfig("delayUnit", e.target.value)}
                   className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground"
                 >
