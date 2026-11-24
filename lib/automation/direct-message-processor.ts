@@ -741,7 +741,9 @@ export async function processIncomingDirectMessage(
         nodeConfig.confirmMessage ||
         activeAutomation?.confirmMessage ||
         "شماره همراه شما {value} ثبت شد. آیا مورد تایید شماست؟";
-      const confirmMsg = template.replace(/{value}/g, phoneRes.phoneNumber);
+      const confirmMsg = template
+        .replace(/{value}/g, phoneRes.phoneNumber)
+        .replace(/{phone}/g, phoneRes.phoneNumber);
 
       await sendDirectQuickReplies(
         accessToken,
@@ -985,6 +987,37 @@ export async function processIncomingDirectMessage(
         leadResult.replyMessage
       );
     }
+
+    // Deliver the campaign's promised "And then, they will get" message when the form completes
+    if (leadResult.nextStep === "COMPLETED" && conversationState.automationId) {
+      const doneAutomation = await prisma.automation.findUnique({
+        where: { id: conversationState.automationId },
+        include: { trackedLinks: true },
+      });
+      if (
+        doneAutomation?.dmMessage &&
+        doneAutomation.dmMessage.trim() &&
+        doneAutomation.dmMessage.trim() !== (leadResult.replyMessage || "").trim()
+      ) {
+        if (doneAutomation.trackedLinks?.[0]) {
+          await sendDirectMessageWithLinkButton(
+            accessToken,
+            instagramAccountId,
+            userId,
+            doneAutomation.dmMessage,
+            doneAutomation.linkButtonLabel || "مشاهده و دریافت لینک",
+            doneAutomation.trackedLinks[0].destinationUrl
+          );
+        } else {
+          await sendDirectMessage(
+            accessToken,
+            instagramAccountId,
+            userId,
+            doneAutomation.dmMessage
+          );
+        }
+      }
+    }
     return;
   }
 
@@ -1056,7 +1089,9 @@ export async function processIncomingDirectMessage(
             const template =
               config.confirmMessage ||
               "شماره همراه شما «{value}» ثبت شد. آیا مورد تایید است؟";
-            const confirmMsg = template.replace(/{value}/g, cleanPhone);
+            const confirmMsg = template
+              .replace(/{value}/g, cleanPhone)
+              .replace(/{phone}/g, cleanPhone);
 
             await sendDirectQuickReplies(
               accessToken,
@@ -1292,7 +1327,9 @@ export async function processIncomingDirectMessage(
             const template =
               config.confirmMessage ||
               "نام و نام خانوادگی شما «{value}» ثبت شد. آیا مورد تایید است؟";
-            const confirmMsg = template.replace(/{value}/g, cleanName);
+            const confirmMsg = template
+              .replace(/{value}/g, cleanName)
+              .replace(/{name}/g, cleanName);
 
             await sendDirectQuickReplies(
               accessToken,

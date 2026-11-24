@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { phpBookingClient } from "@/lib/services/php-booking-client";
 import { syncLeadToWampCrm } from "@/lib/automation/crm-sync";
+import { deliverPrivateReply } from "@/lib/queue/handlers/dm-delivery";
+import { providerManager } from "@/lib/providers/manager/provider-manager";
+import { prisma } from "@/lib/db/client";
 
 describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
   beforeEach(() => {
@@ -82,6 +85,67 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
       expect.objectContaining({
         phone: "09351234567",
         auto_verify_and_book: false,
+      })
+    );
+  });
+
+  it("sends leadPromptName via single privateReply when both Lead Form and dmMessage are enabled on comment trigger", async () => {
+    const privateReplySpy = vi.spyOn(providerManager, "privateReply").mockResolvedValue({
+      success: true,
+      provider: "BOXAPI",
+      messageId: "msg_pr_1",
+      recipientId: "user_commenter_122",
+      status: "SENT",
+      timestamp: new Date(),
+    });
+    const sendTextSpy = vi.spyOn(providerManager, "sendTextMessage").mockResolvedValue({
+      success: true,
+      provider: "BOXAPI",
+      messageId: "msg_txt_1",
+      recipientId: "user_commenter_122",
+      status: "SENT",
+      timestamp: new Date(),
+    });
+    vi.spyOn(prisma.dmLog, "update").mockResolvedValue({} as any);
+    const convUpsertSpy = vi.spyOn(prisma.conversationState, "upsert").mockResolvedValue({} as any);
+
+    await deliverPrivateReply({
+      automation: {
+        id: "auto_122",
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_row_1",
+        dmMessage: "ممنون از شما",
+        openingDmEnabled: false,
+        collectName: true,
+        collectPhone: true,
+        leadPromptName: "لطفاً نام و نام خانوادگی خود را وارد کنید:",
+        leadPromptPhone: "لطفاً شماره همراه خود را وارد کنید:",
+        trackedLinks: [],
+        instagramAccount: {
+          id: "ig_row_1",
+          instagramId: "17841401025517140",
+        },
+      } as any,
+      accessToken: "",
+      commentId: "cmt_122",
+      commenterId: "user_commenter_122",
+      commenterName: "armin.reel",
+      commentText: "122",
+    });
+
+    // Must use the single privateReply slot for the form prompt, NOT dmMessage
+    expect(privateReplySpy).toHaveBeenCalledTimes(1);
+    expect(privateReplySpy).toHaveBeenCalledWith(
+      "ig_row_1",
+      "cmt_122",
+      "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+    );
+    // Must NOT fire sendTextMessage before user replies (outside 24h window)
+    expect(sendTextSpy).not.toHaveBeenCalled();
+    expect(convUpsertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ step: "AWAITING_NAME" }),
+        update: expect.objectContaining({ step: "AWAITING_NAME" }),
       })
     );
   });

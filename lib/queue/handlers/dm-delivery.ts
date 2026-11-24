@@ -276,8 +276,9 @@ export async function deliverPrivateReply(params: {
         ],
       }
     );
-  } else if (!hasDmMessage && hasLeadForm) {
-    // If no separate DM message is configured, use the private reply to directly send the lead prompt
+  } else if (hasLeadForm) {
+    // Always use Instagram's single allowed privateReply slot to send the first Lead Form prompt.
+    // Any configured `dmMessage` ("And then, they will get") is delivered AFTER the form completes.
     const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
     const promptText =
       initialStep === "AWAITING_NAME"
@@ -368,16 +369,6 @@ export async function deliverPrivateReply(params: {
         automationId: automation.id,
       },
     });
-
-    // If a separate DM message was already sent above as privateReply, send promptText as follow-up
-    if (hasDmMessage) {
-      const promptText =
-        initialStep === "AWAITING_NAME"
-          ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
-          : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
-
-      await providerManager.sendTextMessage(accountId, commenterId, promptText);
-    }
   }
 }
 
@@ -394,8 +385,37 @@ export async function deliverPostbackReveal(params: {
 
   const accountId = automation.instagramAccount.id;
   const primaryLink = automation.trackedLinks[0];
+  const hasLeadForm = Boolean(automation.collectName || automation.collectPhone);
 
-  if (primaryLink) {
+  if (hasLeadForm) {
+    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
+    await prisma.conversationState.upsert({
+      where: {
+        instagramAccountId_userId: {
+          instagramAccountId: automation.instagramAccount.instagramId,
+          userId,
+        },
+      },
+      create: {
+        workspaceId: automation.workspaceId,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId,
+        step: initialStep,
+        automationId: automation.id,
+      },
+      update: {
+        step: initialStep,
+        automationId: automation.id,
+      },
+    });
+
+    const promptText =
+      initialStep === "AWAITING_NAME"
+        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
+        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
+
+    await providerManager.sendTextMessage(accountId, userId, promptText);
+  } else if (primaryLink) {
     const bodyText =
       renderMessageWithoutLink({
         message: automation.dmMessage,
@@ -446,34 +466,4 @@ export async function deliverPostbackReveal(params: {
     },
     update: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
   });
-
-  if (automation.collectName || automation.collectPhone) {
-    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
-    await prisma.conversationState.upsert({
-      where: {
-        instagramAccountId_userId: {
-          instagramAccountId: automation.instagramAccount.instagramId,
-          userId,
-        },
-      },
-      create: {
-        workspaceId: automation.workspaceId,
-        instagramAccountId: automation.instagramAccount.instagramId,
-        userId,
-        step: initialStep,
-        automationId: automation.id,
-      },
-      update: {
-        step: initialStep,
-        automationId: automation.id,
-      },
-    });
-
-    const promptText =
-      initialStep === "AWAITING_NAME"
-        ? automation.leadPromptName || "لطفاً نام و نام خانوادگی خود را وارد کنید:"
-        : automation.leadPromptPhone || "لطفاً شماره همراه خود را وارد کنید:";
-
-    await providerManager.sendTextMessage(accountId, userId, promptText);
-  }
 }
