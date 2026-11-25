@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { phpBookingClient } from "@/lib/services/php-booking-client";
 import { syncLeadToWampCrm } from "@/lib/automation/crm-sync";
 import { deliverPrivateReply } from "@/lib/queue/handlers/dm-delivery";
+import { processLeadStep } from "@/lib/automation/email-phone-collector";
 import { providerManager } from "@/lib/providers/manager/provider-manager";
 import { prisma } from "@/lib/db/client";
 import {
@@ -200,5 +201,28 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
       userId: "user_123",
       payload: "REVEAL_LINK",
     });
+  });
+
+  it("refuses to save numeric keyword '122' as lead name during AWAITING_NAME step", async () => {
+    const leadUpsertSpy = vi.spyOn(prisma.lead, "upsert").mockResolvedValue({} as any);
+    const convUpsertSpy = vi.spyOn(prisma.conversationState, "upsert").mockResolvedValue({} as any);
+    vi.spyOn(prisma.aiConfig, "findUnique").mockResolvedValue({
+      isEnabled: false,
+      safetySettings: { leadNormalizer: { enabled: false } },
+    } as any);
+
+    const res = await processLeadStep({
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "user_1",
+      userMessage: "122",
+      currentStep: "AWAITING_NAME",
+      automationId: "auto_122",
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.nextStep).toBe("AWAITING_NAME");
+    expect(leadUpsertSpy).not.toHaveBeenCalled();
+    expect(convUpsertSpy).not.toHaveBeenCalled();
   });
 });

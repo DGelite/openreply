@@ -27,16 +27,77 @@ export interface NormalizedLeadResult {
   confidence: number;
 }
 
+const NON_NAME_SINGLE_WORDS = new Set([
+  "سلام",
+  "درود",
+  "خوبی",
+  "خوبم",
+  "حالت",
+  "چطوری",
+  "مرسی",
+  "ممنون",
+  "سپاس",
+  "تایید",
+  "تأیید",
+  "بله",
+  "آره",
+  "اره",
+  "نه",
+  "خیر",
+  "ویرایش",
+  "لطفا",
+  "لطفاً",
+  "قیمت",
+  "چنده",
+  "هزینه",
+  "کجا",
+  "چطور",
+  "کی",
+  "تست",
+  "ok",
+  "yes",
+  "no",
+  "hi",
+  "hello",
+  "hey",
+  "test",
+]);
+
+/**
+ * Validates that a candidate string looks like an actual human name
+ * and NOT a campaign keyword/number (e.g. "122"), greeting, emoji, or phone number.
+ */
+export function isValidHumanName(candidate?: string | null): boolean {
+  if (!candidate || typeof candidate !== "string") return false;
+  const clean = candidate.replace(/[\u200c\s]+/g, " ").trim();
+  if (clean.length < 2 || clean.length > 60) return false;
+
+  // Reject any ASCII, Persian, or Arabic digits (prevents "122" or phones becoming a name)
+  if (/[0-9\u06F0-\u06F9\u0660-\u0669]/.test(clean)) return false;
+
+  // Must contain at least 2 real alphabetic characters (Persian/Arabic/Latin)
+  const letters = clean.match(/[a-zA-Z\u0600-\u06FF]/g) || [];
+  if (letters.length < 2) return false;
+
+  // Reject punctuation/question-only or known single-word greetings/confirmations
+  if (/[؟?]/.test(clean)) return false;
+  const words = clean.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 1 && NON_NAME_SINGLE_WORDS.has(words[0])) return false;
+
+  return true;
+}
+
 const DEFAULT_NORMALIZER_PROMPT = `تو یک نرمال‌ساز داده‌های تجاری اینستاگرام برای سیستم CRM هستی.
 وظیفه تو فقط و فقط استخراج داده‌های ساختاریافته مشتری (نام، نام خانوادگی، شماره موبایل، یادداشت/سوالات مشتری) از پیام دایرکت است.
 
 قوانین استخراج:
 1. نام و نام خانوادگی را از تعارفات و مقدمه‌ها (سلام، درود، من هستم، اسمم، و...) جدا کن.
 2. فامیلی‌های چندکلمه‌ای (مثل طهماسبی فرد، حسینی نژاد) را به عنوان نام خانوادگی در نظر بگیر.
-3. شماره موبایل را به فرمت استاندارد 09xxxxxxxxx تبدیل کن (تبدیل اعداد فارسی به انگلیسی).
-4. هر توضیح اضافه، سوال درباره خدمات/قیمت، ساعت تماس مناسب، یا نیازهای خاص مشتری را در فیلد notes بنویس.
-5. اگر mode برابر "ASSISTANT_CO_PILOT" بود و کاربر سوالی پرسیده بود، یک پاسخ بسیار کوتاه، محترمانه و دقیق (حداکثر ۱ جمله) در فیلد questionAnswer بده. در غیر این صورت questionAnswer باید null باشد.
-6. خروجی باید فقط و فقط یک آبجکت JSON معتبر و بدون هیچ متن اضافه یا markdown باشد.
+3. اگر پیام فقط عدد یا کد کمپین (مثل 122)، ایموجی، سلام و احوالپرسی بدون نام، سوال یا فقط شماره تماس بود و نام فردی در آن نبود، حتماً firstName و lastName را null برگردان. هرگز عدد یا کد را جای نام نگذار!
+4. شماره موبایل را به فرمت استاندارد 09xxxxxxxxx تبدیل کن (تبدیل اعداد فارسی به انگلیسی).
+5. هر توضیح اضافه، سوال درباره خدمات/قیمت، ساعت تماس مناسب، یا نیازهای خاص مشتری را در فیلد notes بنویس.
+6. اگر mode برابر "ASSISTANT_CO_PILOT" بود و کاربر سوالی پرسیده بود، یک پاسخ بسیار کوتاه، محترمانه و دقیق (حداکثر ۱ جمله) در فیلد questionAnswer بده. در غیر این صورت questionAnswer باید null باشد.
+7. خروجی باید فقط و فقط یک آبجکت JSON معتبر و بدون هیچ متن اضافه یا markdown باشد.
 
 فرمت خروجی JSON:
 {
@@ -56,8 +117,25 @@ function tryFastPath(
 ): NormalizedLeadResult | null {
   const clean = text.trim();
 
-  // Fast-path for Name: 2 or 3 Persian words with no conversational noise
+  // Fast-path for Name: reject pure numbers/emojis/symbols (like "122") with 0 tokens,
+  // or fast-path clean 2-4 word Persian names
   if (expectedField === "name") {
+    const hasRealLetters = /[a-zA-Z\u0600-\u06FF]{2,}/.test(clean);
+    if (!hasRealLetters) {
+      const phoneExt = extractPhoneNumber({ messageText: clean });
+      return {
+        firstName: null,
+        lastName: null,
+        fullName: null,
+        phone: phoneExt.detected && phoneExt.phoneNumber ? phoneExt.phoneNumber : null,
+        notes: null,
+        replyMessageToUser: null,
+        normalizedByAi: false,
+        fastPath: true,
+        confidence: 1.0,
+      };
+    }
+
     const isOnlyPersianLetters = /^[\u0600-\u06FF\s]+$/.test(clean);
     const words = clean.split(/\s+/).filter(Boolean);
     const fillerWords = [
@@ -165,10 +243,11 @@ export async function normalizeLeadData(
     mode?: "SILENT_NORMALIZE_ONLY" | "ASSISTANT_CO_PILOT";
     prompt?: string;
   }) || {};
-  const isNormalizerEnabled = leadNorm.enabled ?? aiConfig?.isEnabled ?? true;
+  // Silent Normalizer runs independently of the general AI Agent auto-responder (aiConfig.isEnabled)
+  const isNormalizerEnabled = leadNorm.enabled ?? true;
 
-  // If normalizer or AI is disabled, execute safe heuristic fallback
-  if (!isNormalizerEnabled || (aiConfig && !aiConfig.isEnabled)) {
+  // Only skip AI if the Silent Normalizer itself is explicitly turned off
+  if (!isNormalizerEnabled) {
     return fallbackRegexExtraction(rawClean, expectedField);
   }
 
@@ -177,7 +256,7 @@ export async function normalizeLeadData(
 
   // 3. AI Execution with Graceful Failure Protection
   try {
-    const aiEngine = await getAiEngine(workspaceId);
+    const aiEngine = await getAiEngine(workspaceId, { ignoreDisabledFlag: true });
 
     const userPrompt = `متن پیام کاربر در دایرکت:
 """${rawClean}"""
@@ -202,9 +281,15 @@ export async function normalizeLeadData(
       return fallbackRegexExtraction(rawClean, expectedField);
     }
 
-    const firstName = parsed.firstName ? String(parsed.firstName).trim() : null;
-    const lastName = parsed.lastName ? String(parsed.lastName).trim() : null;
-    const fullName = firstName && lastName ? `${firstName} ${lastName}` : firstName || lastName || null;
+    let firstName = parsed.firstName ? String(parsed.firstName).trim() : null;
+    let lastName = parsed.lastName ? String(parsed.lastName).trim() : null;
+    let fullName = firstName && lastName ? `${firstName} ${lastName}` : firstName || lastName || null;
+
+    if (!isValidHumanName(fullName)) {
+      firstName = null;
+      lastName = null;
+      fullName = null;
+    }
 
     let phone = parsed.phone ? String(parsed.phone).trim() : null;
     if (phone) {
@@ -272,10 +357,11 @@ function fallbackRegexExtraction(
     .replace(/\s*(?:میخواستم|میخوام|برای|جهت|ثبت\s*نام|تماس)[\s\S]*$/gi, "")
     .trim();
 
-  // Strip phone number from name if user included both
+  // Strip digits/numbers and phone number from name candidate
   if (phone) {
-    cleanedName = cleanedName.replace(/(?:(?:\+|00)?98|0)?9\d{9}/g, "").trim();
+    cleanedName = cleanedName.replace(/(?:(?:\+|00)?98|0)?9[\d\u06F0-\u06F9]{9}/g, "").trim();
   }
+  cleanedName = cleanedName.replace(/[0-9\u06F0-\u06F9\u0660-\u0669]+/g, "").trim();
 
   // Remove question clauses
   const questionSplit = cleanedName.split(/[؟?]/)[0].trim();
@@ -284,9 +370,15 @@ function fallbackRegexExtraction(
   }
 
   const words = cleanedName.split(/\s+/).filter(Boolean);
-  const firstName = words[0] || null;
-  const lastName = words.slice(1).join(" ") || null;
-  const fullName = words.length > 0 ? words.join(" ") : null;
+  let firstName: string | null = words[0] || null;
+  let lastName: string | null = words.slice(1).join(" ") || null;
+  let fullName: string | null = words.length > 0 ? words.join(" ") : null;
+
+  if (!isValidHumanName(fullName)) {
+    firstName = null;
+    lastName = null;
+    fullName = null;
+  }
 
   return {
     firstName: expectedField === "phone" ? null : firstName,

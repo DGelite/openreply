@@ -363,10 +363,14 @@ export async function deliverPrivateReply(params: {
         userId: commenterId,
         step: initialStep,
         automationId: automation.id,
+        activeNodeId: null,
+        metadata: {},
       },
       update: {
         step: initialStep,
         automationId: automation.id,
+        activeNodeId: null,
+        metadata: {},
       },
     });
   }
@@ -402,10 +406,14 @@ export async function deliverPostbackReveal(params: {
         userId,
         step: initialStep,
         automationId: automation.id,
+        activeNodeId: null,
+        metadata: {},
       },
       update: {
         step: initialStep,
         automationId: automation.id,
+        activeNodeId: null,
+        metadata: {},
       },
     });
 

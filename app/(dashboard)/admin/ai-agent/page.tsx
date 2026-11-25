@@ -159,10 +159,12 @@ export default function AiAgentAdminPage() {
           <div className="flex items-center justify-between border-b border-border pb-4">
             <div>
               <h2 className="text-base font-semibold text-foreground">
-                {isFa ? "فعال‌سازی و ارائه دهنده AI" : "AI Service Provider"}
+                {isFa ? "پاسخگوی خودکار دایرکت و کامنت (AI Agent Auto-Reply)" : "AI Agent Auto-Reply"}
               </h2>
               <p className="text-xs text-muted mt-0.5">
-                {isFa ? "سرویس هوش مصنوعی مورد نظر را انتخاب کنید" : "Select your preferred AI engine and model"}
+                {isFa
+                  ? "فقط برای پاسخگویی هوش مصنوعی به پیام‌های آزاد دایرکت پیج. حتی اگر این گزینه خاموش باشد، «سیستم پایش و نرمال‌سازی فرم‌ها (Silent Normalizer)» به‌صورت مستقل فعال می‌ماند."
+                  : "Auto-reply to general Instagram DMs. Silent Lead Normalizer stays active independently even if this is off."}
               </p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -291,13 +293,13 @@ export default function AiAgentAdminPage() {
                   {isFa ? "سیستم پایش و نرمال‌سازی نام و شماره لیدها (Silent Normalizer)" : "Silent Lead Normalizer & Data Extraction"}
                 </h2>
                 <span className="text-[11px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded font-medium">
-                  {isFa ? "نامحسوس و بدون باگ" : "Invisible AI"}
+                  {isFa ? "مستقل از AI Agent" : "Independent of AI Agent"}
                 </span>
               </div>
               <p className="text-xs text-muted mt-1">
                 {isFa
-                  ? "استخراج تمیز نام و نام خانوادگی، شماره تماس و یادداشت‌های مشتری از جملات محاوره‌ای و ثبت مستقیم در CRM بوکینگ."
-                  : "Automatically cleans full names, phone numbers, and notes from conversational DMs and syncs them directly to CRM."}
+                  ? "فقط در فرم‌های دریافت مشخصات (نام و شماره) کار می‌کند و به دایرکت‌های آزاد پیج پاسخی نمی‌دهد — حتی وقتی AI Agent خاموش است."
+                  : "Runs strictly inside lead capture forms without enabling page-wide AI DM replies."}
               </p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { normalizeLeadData } from "@/lib/ai/lead-normalizer";
+import { normalizeLeadData, isValidHumanName } from "@/lib/ai/lead-normalizer";
 import { GeminiProvider } from "@/lib/ai/providers/gemini-provider";
 
 vi.mock("@/lib/db/client", () => ({
@@ -242,6 +242,61 @@ describe("Modular AI Silent Normalizer & Fast-Path Engine", () => {
 
       expect(res.firstName).toBe("مهدی");
       expect(res.replyMessageToUser).toBeNull();
+    });
+
+    it("should reject campaign codes like '122', phone numbers, and greetings as human names", async () => {
+      expect(isValidHumanName("122")).toBe(false);
+      expect(isValidHumanName("09133702778")).toBe(false);
+      expect(isValidHumanName("سلام")).toBe(false);
+      expect(isValidHumanName("حالت خوبه ؟")).toBe(false);
+      expect(isValidHumanName("آرمین طهماسبی")).toBe(true);
+
+      const res = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "122",
+        expectedField: "name",
+      });
+
+      expect(res.fullName).toBeNull();
+      expect(res.firstName).toBeNull();
+    });
+
+    it("should still run Silent Lead Normalizer with AI even when general AI Agent (isEnabled) is OFF", async () => {
+      const { prisma } = await import("@/lib/db/client");
+      const { getAiEngine } = await import("@/lib/ai/factory");
+
+      (prisma.aiConfig.findUnique as any).mockResolvedValue({
+        isEnabled: false, // Page-wide AI Agent auto-reply is OFF
+        safetySettings: {
+          leadNormalizer: {
+            enabled: true, // Silent Normalizer is ON
+            mode: "SILENT_NORMALIZE_ONLY",
+          },
+        },
+      });
+
+      (getAiEngine as any).mockResolvedValue({
+        generateCompletion: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            firstName: "علی",
+            lastName: "رضایی",
+            phone: null,
+            notes: "فقط عصرها تماس بگیرید",
+            questionAnswer: null,
+          }),
+        }),
+      });
+
+      const res = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "سلام علی رضایی هستم فقط عصرها تماس بگیرید",
+        expectedField: "name",
+      });
+
+      expect(getAiEngine).toHaveBeenCalledWith("ws_123", { ignoreDisabledFlag: true });
+      expect(res.normalizedByAi).toBe(true);
+      expect(res.fullName).toBe("علی رضایی");
+      expect(res.notes).toBe("فقط عصرها تماس بگیرید");
     });
   });
 });

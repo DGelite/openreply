@@ -31,7 +31,7 @@ import { addTagToLead, removeTagFromLead, getLeadTags } from "@/lib/crm/tags";
 import { enrollUserInDrip, resumeExpiredDripEnrollmentsForUser } from "@/lib/drip/drip-engine";
 import { getAccountOperatingSchedule, isWithinOperatingHours } from "@/lib/scheduling/operating-schedule";
 import { extractPhoneNumber } from "@/lib/ai/phone-extractor";
-import { normalizeLeadData } from "@/lib/ai/lead-normalizer";
+import { normalizeLeadData, isValidHumanName } from "@/lib/ai/lead-normalizer";
 import { syncLeadToWampCrm } from "./crm-sync";
 
 export interface IncomingDirectMessageEvent {
@@ -348,7 +348,8 @@ export async function processIncomingDirectMessage(
           const leadRecord = await prisma.lead.findUnique({
             where: { id: `lead_${instagramAccountId}_${userId}` },
           });
-          const leadFullName = leadRecord?.name || (conversationState.metadata as any)?.name || undefined;
+          const rawLeadName = leadRecord?.name || (conversationState.metadata as any)?.name;
+          const leadFullName = isValidHumanName(rawLeadName) ? String(rawLeadName).trim() : undefined;
 
           void syncLeadToWampCrm({
             leadId: `lead_${instagramAccountId}_${userId}`,
@@ -538,20 +539,8 @@ export async function processIncomingDirectMessage(
             where: { id: `lead_${instagramAccountId}_${userId}` },
           });
 
-          await prisma.conversationState.update({
-            where: { id: conversationState.id },
-            data: {
-              step: "COMPLETED",
-              extractedPhone: confirmedValue,
-              phoneConfidence: 1.0,
-              phoneOwner: "SELF",
-              phoneRaw: confirmedValue,
-              phoneBuffer: null,
-              phoneBufferExpiresAt: null,
-              conversationStatus: "LEAD_CAPTURED",
-              metadata: updatedMeta,
-            },
-          });
+          const rawLeadName = leadRecord?.name || (conversationState.metadata as any)?.name;
+          const validLeadName = isValidHumanName(rawLeadName) ? String(rawLeadName).trim() : undefined;
 
           await prisma.lead.upsert({
             where: { id: `lead_${instagramAccountId}_${userId}` },
@@ -580,10 +569,63 @@ export async function processIncomingDirectMessage(
             },
           });
 
+          // If the campaign requires collecting Name and we don't have a valid name yet, ask for Name next!
+          if (activeAutomation.collectName && !validLeadName) {
+            await prisma.conversationState.update({
+              where: { id: conversationState.id },
+              data: {
+                step: "AWAITING_NAME",
+                extractedPhone: confirmedValue,
+                phoneConfidence: 1.0,
+                phoneOwner: "SELF",
+                phoneRaw: confirmedValue,
+                phoneBuffer: null,
+                phoneBufferExpiresAt: null,
+                conversationStatus: "LEAD_CAPTURED",
+                metadata: updatedMeta,
+              },
+            });
+
+            void syncLeadToWampCrm({
+              leadId: `lead_${instagramAccountId}_${userId}`,
+              phone: confirmedValue,
+              username,
+              igsid: userId,
+              instagramAccountId,
+              provider: (account.primaryProvider || "META") as any,
+              lead_source: `campaign:${activeAutomation.name || activeAutomation.id}`,
+              auto_verify_and_book: Boolean(activeAutomation.autoVerifyAndBook),
+            });
+
+            await sendDirectMessage(
+              accessToken,
+              instagramAccountId,
+              userId,
+              activeAutomation.leadPromptName ||
+                "عالیه! شماره‌تون ثبت شد 👍 فقط لطفاً اسم و فامیلتون رو هم بفرستید تا تکمیل بشه 🙏"
+            );
+            return;
+          }
+
+          await prisma.conversationState.update({
+            where: { id: conversationState.id },
+            data: {
+              step: "COMPLETED",
+              extractedPhone: confirmedValue,
+              phoneConfidence: 1.0,
+              phoneOwner: "SELF",
+              phoneRaw: confirmedValue,
+              phoneBuffer: null,
+              phoneBufferExpiresAt: null,
+              conversationStatus: "LEAD_CAPTURED",
+              metadata: updatedMeta,
+            },
+          });
+
           void syncLeadToWampCrm({
             leadId: `lead_${instagramAccountId}_${userId}`,
             phone: confirmedValue,
-            full_name: leadRecord?.name || (conversationState.metadata as any)?.name || undefined,
+            full_name: validLeadName,
             username,
             igsid: userId,
             instagramAccountId,
@@ -699,7 +741,10 @@ export async function processIncomingDirectMessage(
     const existingLead = await prisma.lead.findUnique({
       where: { id: `lead_${instagramAccountId}_${userId}` },
     });
-    const leadFullName = existingLead?.name || norm.fullName || (conversationState.metadata as any)?.name || undefined;
+    const rawExistingName = existingLead?.name || (conversationState.metadata as any)?.name;
+    const validExistingName = isValidHumanName(rawExistingName) ? String(rawExistingName).trim() : undefined;
+    const validNormName = isValidHumanName(norm.fullName) ? norm.fullName!.trim() : undefined;
+    const leadFullName = validExistingName || validNormName || undefined;
 
     const isFlowActive = Boolean(
       activeAutomation &&
@@ -879,8 +924,23 @@ export async function processIncomingDirectMessage(
       }
     }
 
-    // If conversation was actively awaiting phone in a linear campaign, complete it!
-    if (conversationState.step === "AWAITING_PHONE") {
+    // If conversation was awaiting name/phone in a linear campaign
+    if (conversationState.step === "AWAITING_NAME" && activeAutomation?.collectName && !leadFullName) {
+      await prisma.conversationState.update({
+        where: { id: conversationState.id },
+        data: { step: "AWAITING_NAME" },
+      });
+      await sendDirectMessage(
+        accessToken,
+        instagramAccountId,
+        userId,
+        activeAutomation.leadPromptName ||
+          "مرسی، شماره‌تون رو گرفتم 👍 لطفاً اسم و فامیلتون رو هم برام بنویسید تا تکمیل بشه 🙏"
+      );
+      return;
+    }
+
+    if (conversationState.step === "AWAITING_PHONE" || (conversationState.step === "AWAITING_NAME" && leadFullName)) {
       const needsOtp = Boolean(
         activeAutomation?.collectPhone &&
         !activeAutomation?.collectPhoneSkipOtp &&
@@ -1300,9 +1360,18 @@ export async function processIncomingDirectMessage(
               expectedField: "name",
               mode: "SILENT_NORMALIZE_ONLY",
             });
-            cleanValue = norm.fullName || cleanValue;
+            cleanValue = isValidHumanName(norm.fullName) ? norm.fullName!.trim() : "";
             normPhone = norm.phone;
             normNotes = norm.notes;
+
+            if (!cleanValue) {
+              const askAgain =
+                norm.replyMessageToUser
+                  ? `${norm.replyMessageToUser}\n\nلطفاً اسم و فامیل واقعیتون رو برام بنویسید 🙏`
+                  : "لطفاً اسم و فامیل واقعیتون رو برام بنویسید 🙏";
+              await sendDirectMessage(accessToken, instagramAccountId, userId, askAgain);
+              return;
+            }
           } else {
             normNotes = cleanValue;
           }
@@ -1665,10 +1734,14 @@ export async function processIncomingDirectMessage(
             userId,
             step: initialStep,
             automationId: automation.id,
+            activeNodeId: null,
+            metadata: {},
           },
           update: {
             step: initialStep,
             automationId: automation.id,
+            activeNodeId: null,
+            metadata: {},
           },
         });
 

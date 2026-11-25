@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db/client";
 import { syncLeadToWampCrm } from "./crm-sync";
 import { SmsIrClient } from "@/lib/services/sms-ir-client";
 import { extractPhoneNumber, normalizeNumerals } from "@/lib/ai/phone-extractor";
-import { normalizeLeadData } from "@/lib/ai/lead-normalizer";
+import { normalizeLeadData, isValidHumanName } from "@/lib/ai/lead-normalizer";
 
 /**
  * Validates an email address.
@@ -82,12 +82,60 @@ export async function processLeadStep(params: {
       mode: "SILENT_NORMALIZE_ONLY",
     });
 
-    const name = norm.fullName || trimmedMessage;
+    const name = isValidHumanName(norm.fullName) ? norm.fullName!.trim() : null;
     const phoneFromNorm = norm.phone;
     const notesFromNorm = norm.notes;
 
+    // NEVER save numbers (e.g. "122"), greetings, or invalid text as a person's name!
+    if (!name) {
+      if (phoneFromNorm) {
+        await prisma.lead.upsert({
+          where: { id: `lead_${instagramAccountId}_${userId}` },
+          create: {
+            id: `lead_${instagramAccountId}_${userId}`,
+            workspaceId,
+            instagramAccountId,
+            userId,
+            username,
+            phone: phoneFromNorm,
+            phoneNotes: notesFromNorm || undefined,
+            sourceAutomationId: automationId,
+            provider,
+            externalUserId,
+            crmSyncStatus: "PENDING",
+          },
+          update: {
+            phone: phoneFromNorm,
+            phoneNotes: notesFromNorm || undefined,
+            username: username ?? undefined,
+            sourceAutomationId: automationId ?? undefined,
+            provider,
+            externalUserId: externalUserId ?? undefined,
+          },
+        });
+        return {
+          handled: true,
+          success: false,
+          nextStep: "AWAITING_NAME",
+          replyMessage: "مرسی، شماره‌تون رو نگه داشتم 👍 لطفاً اسم و فامیلتون رو هم برام بنویسید تا تکمیل بشه 🙏",
+          capturedData: { phone: phoneFromNorm },
+        };
+      }
+
+      const askAgainMsg = norm.replyMessageToUser
+        ? `${norm.replyMessageToUser}\n\nلطفاً اسم و فامیل واقعیتون رو برام بنویسید تا بتونم ثبتش کنم 🙏`
+        : "لطفاً اسم و فامیل واقعیتون رو برام بنویسید تا بتونم ثبتش کنم 🙏";
+
+      return {
+        handled: true,
+        success: false,
+        nextStep: "AWAITING_NAME",
+        replyMessage: askAgainMsg,
+      };
+    }
+
     // Save lead name and any co-extracted phone/notes
-    await prisma.lead.upsert({
+    const savedLead = await prisma.lead.upsert({
       where: { id: `lead_${instagramAccountId}_${userId}` },
       create: {
         id: `lead_${instagramAccountId}_${userId}`,
@@ -118,7 +166,8 @@ export async function processLeadStep(params: {
       ? await prisma.automation.findUnique({ where: { id: automationId } })
       : null;
 
-    if (automation?.collectPhone) {
+    const hasVerifiedPhoneAlready = Boolean(savedLead.phone && savedLead.phoneVerified);
+    if (automation?.collectPhone && !hasVerifiedPhoneAlready) {
       await prisma.conversationState.upsert({
         where: {
           instagramAccountId_userId: { instagramAccountId, userId },
@@ -172,6 +221,7 @@ export async function processLeadStep(params: {
     void syncLeadToWampCrm({
       leadId: `lead_${instagramAccountId}_${userId}`,
       full_name: name,
+      phone: savedLead.phone || phoneFromNorm || undefined,
       username,
       igsid: userId,
       instagramAccountId,
@@ -486,10 +536,12 @@ export async function processLeadStep(params: {
       },
     });
 
+    const validStoredName = isValidHumanName(leadRecord?.name) ? leadRecord!.name! : undefined;
+
     void syncLeadToWampCrm({
       leadId: `lead_${instagramAccountId}_${userId}`,
       phone,
-      full_name: nameFromNorm || leadRecord?.name || undefined,
+      full_name: nameFromNorm || validStoredName || undefined,
       username,
       igsid: userId,
       instagramAccountId,

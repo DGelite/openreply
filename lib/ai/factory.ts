@@ -49,9 +49,14 @@ function resolveKey(encrypted?: string | null, envFallback?: string): string {
  * Creates and returns the active AI completion engine for a workspace.
  * Strictly respects the chosen provider with NO unauthorized fallback to BoxAPI.
  */
-export async function getAiEngine(workspaceId: string): Promise<AiProvider> {
+export async function getAiEngine(
+  workspaceId: string,
+  options?: { ignoreDisabledFlag?: boolean }
+): Promise<AiProvider> {
   const now = Date.now();
-  const cached = aiEngineCache.get(workspaceId);
+  const bypassDisabled = Boolean(options?.ignoreDisabledFlag);
+  const cacheKey = bypassDisabled ? `${workspaceId}:direct` : workspaceId;
+  const cached = aiEngineCache.get(cacheKey);
   if (cached && now < cached.expiresAt) {
     return cached.engine;
   }
@@ -60,12 +65,12 @@ export async function getAiEngine(workspaceId: string): Promise<AiProvider> {
     where: { workspaceId },
   });
 
-  if (!config || !config.isEnabled) {
+  if (!config || (!config.isEnabled && !bypassDisabled)) {
     const defaultGemini = new GeminiProvider(
       process.env.GEMINI_API_KEY || "",
       process.env.GEMINI_MODEL || "gemini-2.5-flash"
     );
-    setCachedAiEngine(workspaceId, defaultGemini, now);
+    setCachedAiEngine(cacheKey, defaultGemini, now);
     return defaultGemini;
   }
 
@@ -152,7 +157,7 @@ export async function getAiEngine(workspaceId: string): Promise<AiProvider> {
     },
   };
 
-  setCachedAiEngine(workspaceId, wrappedEngine, now);
+  setCachedAiEngine(cacheKey, wrappedEngine, now);
   return wrappedEngine;
 }
 
