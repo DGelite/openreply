@@ -33,6 +33,12 @@ import { getAccountOperatingSchedule, isWithinOperatingHours } from "@/lib/sched
 import { extractPhoneNumber } from "@/lib/ai/phone-extractor";
 import { normalizeLeadData, isValidHumanName } from "@/lib/ai/lead-normalizer";
 import { syncLeadToWampCrm } from "./crm-sync";
+import { selectDmMessageVariation } from "./ab-testing";
+import {
+  hasOpen24HourWindow,
+  redactSensitiveFinancialData,
+  classifyProviderError,
+} from "@/lib/meta/compliance";
 
 export interface IncomingDirectMessageEvent {
   instagramAccountId: string; // IGSID of connected account
@@ -85,6 +91,16 @@ export async function processIncomingDirectMessage(
   });
 
   if (!account) return;
+
+  // Meta Compliance: Never process self-messages / echoes from the page itself
+  if (
+    !userId ||
+    userId === "unknown" ||
+    userId === account.instagramId ||
+    (account.boxAccountId && userId === account.boxAccountId)
+  ) {
+    return;
+  }
 
   const isBoxApiPrimary =
     account.orchestrationMode === "BOXAPI_PRIMARY" ||
@@ -139,17 +155,25 @@ export async function processIncomingDirectMessage(
 
   const sendDirectMessage = (t: string, accId: string, uId: string, msg: string) => 
     safeSend(async () => {
-      const res = await providerManager.sendTextMessage(account.id, uId, msg);
-      if (!res.success) throw new Error(res.error || "Failed to send DM");
+      const { sanitized } = redactSensitiveFinancialData(msg);
+      const res = await providerManager.sendTextMessage(account.id, uId, sanitized);
+      if (!res.success) {
+        const classified = classifyProviderError(res.error, instagramAccountId);
+        throw classified || new Error(res.error || "Failed to send DM");
+      }
       return res;
     });
   
   const sendDirectMessageWithLinkButton = (t: string, accId: string, uId: string, msg: string, lbl: string, url: string) => 
     safeSend(async () => {
-      const res = await providerManager.sendTextMessage(account.id, uId, msg, {
+      const { sanitized } = redactSensitiveFinancialData(msg);
+      const res = await providerManager.sendTextMessage(account.id, uId, sanitized, {
         buttons: [{ type: "web_url", title: lbl, url }],
       });
-      if (!res.success) throw new Error(res.error || "Failed to send DM with link button");
+      if (!res.success) {
+        const classified = classifyProviderError(res.error, instagramAccountId);
+        throw classified || new Error(res.error || "Failed to send DM with link button");
+      }
       return res;
     });
 
@@ -157,33 +181,44 @@ export async function processIncomingDirectMessage(
     safeSend(async () => {
       const attType = type === "audio" ? "voice" : type;
       const res = await providerManager.sendAttachment(account.id, uId, attType, url);
-      if (!res.success) throw new Error(res.error || "Failed to send media DM");
+      if (!res.success) {
+        const classified = classifyProviderError(res.error, instagramAccountId);
+        throw classified || new Error(res.error || "Failed to send media DM");
+      }
       return res;
     });
 
   const sendDirectGenericTemplate = (t: string, accId: string, uId: string, elements: any[]) =>
     safeSend(async () => {
       const res = await providerManager.sendGenericTemplate(account.id, uId, elements);
-      if (!res.success) throw new Error(res.error || "Failed to send generic template DM");
+      if (!res.success) {
+        const classified = classifyProviderError(res.error, instagramAccountId);
+        throw classified || new Error(res.error || "Failed to send generic template DM");
+      }
       return res;
     });
 
   const sendDirectQuickReplies = (t: string, accId: string, uId: string, text: string, quickReplies: any[]) =>
     safeSend(async () => {
-      const res = await providerManager.sendTextMessage(account.id, uId, text, {
+      const { sanitized } = redactSensitiveFinancialData(text);
+      const res = await providerManager.sendTextMessage(account.id, uId, sanitized, {
         quick_replies: quickReplies.map((qr) => ({
           content_type: "text",
           title: qr.title,
           payload: qr.payload,
         })),
       });
-      if (!res.success) throw new Error(res.error || "Failed to send quick replies DM");
+      if (!res.success) {
+        const classified = classifyProviderError(res.error, instagramAccountId);
+        throw classified || new Error(res.error || "Failed to send quick replies DM");
+      }
       return res;
     });
 
   const sendDirectMessageWithMultipleButtons = (t: string, accId: string, uId: string, text: string, buttons: any[]) =>
     safeSend(async () => {
-      const res = await providerManager.sendTextMessage(account.id, uId, text, {
+      const { sanitized } = redactSensitiveFinancialData(text);
+      const res = await providerManager.sendTextMessage(account.id, uId, sanitized, {
         buttons: buttons.map((b) => ({
           type: b.type === "web_url" ? "web_url" : "postback",
           title: b.title,
@@ -191,7 +226,10 @@ export async function processIncomingDirectMessage(
           payload: b.payload,
         })),
       });
-      if (!res.success) throw new Error(res.error || "Failed to send multiple buttons DM");
+      if (!res.success) {
+        const classified = classifyProviderError(res.error, instagramAccountId);
+        throw classified || new Error(res.error || "Failed to send multiple buttons DM");
+      }
       return res;
     });
 
@@ -1745,12 +1783,13 @@ export async function processIncomingDirectMessage(
           },
         });
 
-        const promptText =
+        const promptText = selectDmMessageVariation(
           initialStep === "AWAITING_NAME"
             ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
             : initialStep === "AWAITING_EMAIL"
             ? automation.leadPromptEmail || "لطفاً ایمیلتون رو بفرستید:"
-            : automation.leadPromptPhone || "لطفاً شماره موبایلتون رو بفرستید 📱";
+            : automation.leadPromptPhone || "لطفاً شماره موبایلتون رو بفرستید 📱"
+        );
 
         await sendDirectMessage(
           accessToken,
@@ -2184,6 +2223,7 @@ export async function executeFlowBranchAndDispatch({
 
 /**
  * Resumes a delayed flow branch triggered by a Smart Delay node.
+ * Strictly enforces Meta 24-hour window, human handover, circuit breaker, and rate limits.
  */
 export async function processResumeFlowNode(payload: {
   instagramAccountId: string;
@@ -2194,16 +2234,56 @@ export async function processResumeFlowNode(payload: {
 }): Promise<void> {
   const { instagramAccountId, userId, username, automationId, startNodeId } = payload;
 
+  // 1. Account cooldown guard
+  const cooldown = isAccountInCooldown(instagramAccountId);
+  if (cooldown.inCooldown) {
+    console.warn(`[Compliance] Skipped delayed flow resume for ${userId}: account cooldown active.`);
+    return;
+  }
+
+  // 2. Meta 24-Hour Messaging Policy & Human Handover guard
+  const windowStatus = await hasOpen24HourWindow(instagramAccountId, userId);
+  if (!windowStatus.open) {
+    console.warn(
+      `[Compliance] Skipped delayed flow resume for ${userId}: 24-hour messaging window is not open / expired.`
+    );
+    return;
+  }
+  if (windowStatus.isHumanHandover) {
+    console.info(`[Compliance] Skipped delayed flow resume for ${userId}: human handover active.`);
+    return;
+  }
+
   const account = await prisma.instagramAccount.findUnique({
     where: { instagramId: instagramAccountId },
   });
   if (!account) return;
+
+  // Meta Compliance: Never process self-messages / echoes from the page itself
+  if (
+    !userId ||
+    userId === "unknown" ||
+    userId === account.instagramId ||
+    (account.boxAccountId && userId === account.boxAccountId)
+  ) {
+    return;
+  }
+
+  const rateLimit = await reserveDMSlot(instagramAccountId, "DIRECT_MESSAGE", 0);
+  if (!rateLimit.allowed) {
+    if (rateLimit.shouldRequeue) {
+      await enqueueJob("resume-flow-node", payload, rateLimit.requeueDelayMs);
+    }
+    return;
+  }
 
   const automation = await prisma.automation.findFirst({
     where: { id: automationId, isActive: true },
     include: { trackedLinks: true },
   });
   if (!automation || !automation.flowGraph) return;
+
+  await applyDangerZoneBackoff();
 
   let accessToken = "";
   if (account.accessToken) {

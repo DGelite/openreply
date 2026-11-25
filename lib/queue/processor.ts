@@ -20,6 +20,7 @@ import {
 import { handlePublicCommentReply } from "./handlers/public-reply";
 import { deliverPrivateReply, deliverPostbackReveal } from "./handlers/dm-delivery";
 import { executeFlowBranchAndDispatch } from "@/lib/automation/direct-message-processor";
+import { isCommentWithin7DayWindow } from "@/lib/meta/compliance";
 import type { FlowGraph } from "@/lib/flow/types";
 
 // Re-export error and alert helpers for complete backward compatibility
@@ -33,8 +34,20 @@ export async function processComment(data: ProcessCommentJob, attemptsMade: numb
     commenterId,
     commenterName,
     mediaId,
+    commentCreatedAt,
   } = data;
   const requeueAttempt = data.requeueAttempt ?? 0;
+
+  // ── Meta Compliance: Never reply to self-comments or unknown commenters ────
+  if (!commenterId || commenterId === "unknown" || commenterId === instagramAccountId) {
+    return;
+  }
+
+  // ── Meta Compliance: 7-day Private Reply Window ────────────────────────────
+  if (!isCommentWithin7DayWindow(commentCreatedAt)) {
+    console.warn(`[Compliance] Comment ${commentId} is older than Meta's 7-day private-reply window. Skipping.`);
+    return;
+  }
 
   // ── Circuit Breaker check ──────────────────────────────────────────────────
   const cooldown = isAccountInCooldown(instagramAccountId);

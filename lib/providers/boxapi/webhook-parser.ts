@@ -52,6 +52,7 @@ export interface ParsedBoxApiComment {
   commenterId: string;
   commenterName?: string;
   mediaId: string;
+  createdAt?: number;
   eventId?: string;
 }
 
@@ -99,6 +100,7 @@ export function parseBoxApiCommentEvents(payload: unknown): ParsedBoxApiComment[
       commenterId: String(data.from?.id || 'unknown'),
       commenterName: data.from?.username,
       mediaId: String(data.media?.id || 'unknown'),
+      createdAt: typeof data.created_at === 'number' ? data.created_at : undefined,
       eventId: p.event_id,
     },
   ];

@@ -22,6 +22,12 @@ import {
   applyDangerZoneBackoff,
 } from "@/lib/meta/client";
 import { isAccountInCooldown, tripAccountCooldown } from "@/lib/meta/circuit-breaker";
+import { providerManager } from "@/lib/providers/manager/provider-manager";
+import { reserveDMSlot } from "@/lib/utils/rate-limiter";
+import {
+  redactSensitiveFinancialData,
+  classifyProviderError,
+} from "@/lib/meta/compliance";
 
 export interface EnrollUserOptions {
   workspaceId: string;
@@ -194,12 +200,16 @@ export async function processDueDripEnrollments(limit = 25) {
       (a: any) => a.id === enrollment.instagramAccountId
     ) || campaign.workspace.instagramAccounts[0];
 
-    if (!account || !account.accessToken) {
+    const isBoxApiPrimary =
+      account?.orchestrationMode === "BOXAPI_PRIMARY" ||
+      (Boolean(account?.boxApiKey) && !account?.accessToken);
+
+    if (!account || (!account.accessToken && !isBoxApiPrimary)) {
       await prisma.dripEnrollment.update({
         where: { id: enrollment.id },
         data: {
           status: "PAUSED",
-          lastError: "No valid Instagram access token found",
+          lastError: "No valid Instagram access token or BoxAPI credentials found",
         },
       });
       results.push({
@@ -268,6 +278,24 @@ export async function processDueDripEnrollments(limit = 25) {
       continue;
     }
 
+    if (convState?.isHumanHandover) {
+      console.info(
+        `[Compliance] Skipping drip step for user ${enrollment.userId}: human handover active.`
+      );
+      await prisma.dripEnrollment.update({
+        where: { id: enrollment.id },
+        data: {
+          status: "PAUSED",
+          lastError: "Paused automatically during human agent handover.",
+        },
+      });
+      results.push({
+        enrollmentId: enrollment.id,
+        status: "PAUSED_HUMAN_HANDOVER",
+      });
+      continue;
+    }
+
     const currentStep = campaign.steps[enrollment.currentStepIndex];
     if (!currentStep) {
       // Completed all steps
@@ -279,8 +307,31 @@ export async function processDueDripEnrollments(limit = 25) {
       continue;
     }
 
-    const accessToken = safeDecryptToken(account.accessToken);
-    if (!accessToken) {
+    const rateLimit = await reserveDMSlot(account.instagramId, "DIRECT_MESSAGE", 0);
+    if (!rateLimit.allowed) {
+      if (rateLimit.shouldRequeue) {
+        await prisma.dripEnrollment.update({
+          where: { id: enrollment.id },
+          data: { nextRunAt: new Date(Date.now() + rateLimit.requeueDelayMs) },
+        });
+      }
+      results.push({
+        enrollmentId: enrollment.id,
+        status: "SKIPPED_RATE_LIMIT",
+        error: "Hourly rate limit reached",
+      });
+      continue;
+    }
+
+    let accessToken = "";
+    if (account.accessToken) {
+      try {
+        accessToken = safeDecryptToken(account.accessToken);
+      } catch {
+        accessToken = "";
+      }
+    }
+    if (!accessToken && !isBoxApiPrimary) {
       await prisma.dripEnrollment.update({
         where: { id: enrollment.id },
         data: {
@@ -299,8 +350,65 @@ export async function processDueDripEnrollments(limit = 25) {
     try {
       await applyDangerZoneBackoff();
 
+      const assertProviderRes = (res: { success: boolean; error?: string }) => {
+        if (!res.success) {
+          const classified = classifyProviderError(res.error, account.instagramId);
+          throw classified || new Error(res.error || "Failed to send drip DM");
+        }
+      };
+
       // Deliver step content based on messageType
-      if (currentStep.messageType === "MEDIA" && currentStep.mediaUrl) {
+      // Use ProviderManager for BOXAPI_PRIMARY, and direct Meta client for Meta tokens (keeping Meta headers & tests aligned)
+      if (isBoxApiPrimary) {
+        if (currentStep.messageType === "MEDIA" && currentStep.mediaUrl) {
+          const res = await providerManager.sendAttachment(
+            account.id,
+            enrollment.userId,
+            "image",
+            currentStep.mediaUrl
+          );
+          assertProviderRes(res);
+        } else if (currentStep.messageType === "CAROUSEL") {
+          const rawButtons = (currentStep.buttons as any[]) || [];
+          const { sanitized: titleText } = redactSensitiveFinancialData(
+            currentStep.messageText?.slice(0, 80) || campaign.name.slice(0, 80)
+          );
+          const res = await providerManager.sendGenericTemplate(account.id, enrollment.userId, [
+            {
+              title: titleText,
+              subtitle: campaign.description?.slice(0, 80),
+              image_url: currentStep.mediaUrl || undefined,
+              buttons:
+                rawButtons.length > 0
+                  ? rawButtons.slice(0, 3).map((b) => ({
+                      type: b.type === "web_url" ? "web_url" : "postback",
+                      title: (b.title || "مشاهده").slice(0, 20),
+                      url: b.url,
+                      payload: b.payload,
+                    }))
+                  : undefined,
+            },
+          ]);
+          assertProviderRes(res);
+        } else {
+          const rawButtons = (currentStep.buttons as any[]) || [];
+          const buttons = rawButtons.slice(0, 3).map((b) => ({
+            type: (b.type === "web_url" ? "web_url" : "postback") as "web_url" | "postback",
+            title: (b.title || "مشاهده").slice(0, 20),
+            url: b.url,
+            payload: b.payload,
+          }));
+
+          const { sanitized: safeMsg } = redactSensitiveFinancialData(currentStep.messageText || "");
+          const res = await providerManager.sendTextMessage(
+            account.id,
+            enrollment.userId,
+            safeMsg,
+            buttons.length > 0 ? { buttons } : undefined
+          );
+          assertProviderRes(res);
+        }
+      } else if (currentStep.messageType === "MEDIA" && currentStep.mediaUrl) {
         await sendDirectMediaMessage(
           accessToken,
           account.instagramId,
@@ -317,13 +425,16 @@ export async function processDueDripEnrollments(limit = 25) {
           payload: b.payload,
         }));
 
+        const { sanitized: titleText } = redactSensitiveFinancialData(
+          currentStep.messageText?.slice(0, 80) || campaign.name.slice(0, 80)
+        );
         await sendDirectGenericTemplate(
           accessToken,
           account.instagramId,
           enrollment.userId,
           [
             {
-              title: currentStep.messageText?.slice(0, 80) || campaign.name.slice(0, 80),
+              title: titleText,
               subtitle: campaign.description?.slice(0, 80),
               image_url: currentStep.mediaUrl || undefined,
               buttons: buttons.length > 0 ? buttons.slice(0, 3) : undefined,
@@ -331,7 +442,6 @@ export async function processDueDripEnrollments(limit = 25) {
           ]
         );
       } else {
-        // TEXT or BUTTONS
         const rawButtons = (currentStep.buttons as any[]) || [];
         const buttons: MetaButton[] = rawButtons.map((b) => ({
           type: b.type || "web_url",
@@ -340,12 +450,13 @@ export async function processDueDripEnrollments(limit = 25) {
           payload: b.payload,
         }));
 
+        const { sanitized: safeMsg } = redactSensitiveFinancialData(currentStep.messageText || "");
         if (buttons.length > 0) {
           await sendDirectMessageWithMultipleButtons(
             accessToken,
             account.instagramId,
             enrollment.userId,
-            currentStep.messageText || "",
+            safeMsg,
             buttons.slice(0, 3)
           );
         } else {
@@ -353,7 +464,7 @@ export async function processDueDripEnrollments(limit = 25) {
             accessToken,
             account.instagramId,
             enrollment.userId,
-            currentStep.messageText || ""
+            safeMsg
           );
         }
       }

@@ -152,6 +152,10 @@ async function processAndEnqueueBoxApiPayload(
   const commentJobs: Array<{ name: string; payload: any }> = [];
 
   for (const c of comments) {
+    if (!c.commenterId || c.commenterId === 'unknown' || c.commenterId === targetInstagramId) {
+      continue;
+    }
+
     try {
       await prisma.processedComment.create({
         data: {
@@ -170,6 +174,7 @@ async function processAndEnqueueBoxApiPayload(
           commenterId: c.commenterId,
           commenterName: c.commenterName,
           mediaId: c.mediaId,
+          commentCreatedAt: c.createdAt,
           source: 'WEBHOOK' as const,
         },
       });
@@ -187,6 +192,15 @@ async function processAndEnqueueBoxApiPayload(
   const dmJobs: Array<{ name: string; payload: any }> = [];
 
   for (const dm of dms) {
+    if (
+      !dm.userId ||
+      dm.userId === 'unknown' ||
+      dm.userId === targetInstagramId ||
+      (payload.account_id && dm.userId === String(payload.account_id))
+    ) {
+      continue;
+    }
+
     try {
       await prisma.processedMessage.create({
         data: {
@@ -220,6 +234,15 @@ async function processAndEnqueueBoxApiPayload(
   const postbackJobs: Array<{ name: string; payload: any }> = [];
 
   for (const pb of postbacks) {
+    if (
+      !pb.userId ||
+      pb.userId === 'unknown' ||
+      pb.userId === targetInstagramId ||
+      (payload.account_id && pb.userId === String(payload.account_id))
+    ) {
+      continue;
+    }
+
     if (pb.mid) {
       try {
         await prisma.processedMessage.create({

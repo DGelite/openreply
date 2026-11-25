@@ -113,6 +113,7 @@ export async function generateSmartResponse(
   }
 
   promptSections.push(`دستورالعمل استراتژیک این مرحله: ${strategy.guidelineForAi}`);
+  promptSections.push("قانون الزامی ایمنی اینستاگرام: تحت هیچ شرایطی شماره کارت بانکی (۱۶ رقمی)، شماره شبا یا درخواست اطلاعات محرمانه مالی را در دایرکت ننویس؛ برای پرداخت فقط لینک صفحه سایت را بفرست.");
   promptSections.push("پاسخ نهایی را به زبان فارسی عامیانه، صمیمی، موجز و بدون هیچ‌گونه مقدمه‌چینی بنویس. فقط متن پیام ارسالی به مخاطب را تولید کن.");
 
   const systemPrompt = promptSections.join("\n\n");

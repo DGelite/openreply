@@ -12,6 +12,7 @@ import {
 } from '../contracts/provider-types';
 import { BoxApiClient, BoxApiConfig } from './boxapi-client';
 import { prisma } from '@/lib/db/client';
+import { redactSensitiveFinancialData, classifyProviderError } from '@/lib/meta/compliance';
 
 export class BoxApiProvider implements InstagramProvider {
   public readonly providerType: ProviderType = 'BOXAPI';
@@ -88,9 +89,14 @@ export class BoxApiProvider implements InstagramProvider {
     options?: MessageOptions
   ): Promise<ProviderSendResult> {
     const client = await this.getClient(accountId);
+    const { sanitized: safeText, redacted } = redactSensitiveFinancialData(text);
+    if (redacted) {
+      console.warn(`[Compliance] Redacted raw payment card digits from BoxAPI DM to ${recipientId}`);
+    }
+
     const payload: Record<string, unknown> = {
       recipient_id: recipientId,
-      message: text,
+      message: safeText,
     };
 
     if (options?.buttons && options.buttons.length > 0) {
@@ -124,12 +130,14 @@ export class BoxApiProvider implements InstagramProvider {
         timestamp: new Date(),
       };
     } catch (err: unknown) {
+      const msg = (err as Error)?.message;
+      classifyProviderError(msg, accountId);
       return {
         success: false,
         provider: 'BOXAPI',
         recipientId,
         status: 'FAILED',
-        error: (err as Error)?.message,
+        error: msg,
         rawResponse: err,
         timestamp: new Date(),
       };
@@ -170,12 +178,14 @@ export class BoxApiProvider implements InstagramProvider {
         timestamp: new Date(),
       };
     } catch (err: unknown) {
+      const msg = (err as Error)?.message;
+      classifyProviderError(msg, accountId);
       return {
         success: false,
         provider: 'BOXAPI',
         recipientId,
         status: 'FAILED',
-        error: (err as Error)?.message,
+        error: msg,
         rawResponse: err,
         timestamp: new Date(),
       };
@@ -222,12 +232,14 @@ export class BoxApiProvider implements InstagramProvider {
         timestamp: new Date(),
       };
     } catch (err: unknown) {
+      const msg = (err as Error)?.message;
+      classifyProviderError(msg, accountId);
       return {
         success: false,
         provider: 'BOXAPI',
         recipientId,
         status: 'FAILED',
-        error: (err as Error)?.message,
+        error: msg,
         rawResponse: err,
         timestamp: new Date(),
       };
@@ -280,13 +292,17 @@ export class BoxApiProvider implements InstagramProvider {
     options?: MessageOptions
   ): Promise<ProviderSendResult> {
     const client = await this.getClient(accountId);
+    const { sanitized: safeText, redacted } = redactSensitiveFinancialData(text);
+    if (redacted) {
+      console.warn(`[Compliance] Redacted raw payment card digits from BoxAPI privateReply for ${commentId}`);
+    }
 
     try {
       const response = await client.officialPost<{ message_id?: string }>(
         '/service/actions/private_reply',
         {
           comment_id: commentId,
-          message: text,
+          message: safeText,
         }
       );
 
@@ -301,12 +317,14 @@ export class BoxApiProvider implements InstagramProvider {
         timestamp: new Date(),
       };
     } catch (err: unknown) {
+      const msg = (err as Error)?.message;
+      classifyProviderError(msg, accountId);
       return {
         success: false,
         provider: 'BOXAPI',
         recipientId: commentId,
         status: 'FAILED',
-        error: (err as Error)?.message,
+        error: msg,
         rawResponse: err,
         timestamp: new Date(),
       };

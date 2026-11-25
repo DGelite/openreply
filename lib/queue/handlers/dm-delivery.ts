@@ -15,6 +15,7 @@ import { enrollUserInDrip } from "@/lib/drip/drip-engine";
 import { setHumanHandover } from "@/lib/automation/human-handover";
 import { generateSmartResponse } from "@/lib/ai/features/smart-responses";
 import { enqueueJob } from "@/lib/queue/mysql-queue";
+import { hasOpen24HourWindow, redactSensitiveFinancialData } from "@/lib/meta/compliance";
 
 export async function deliverPrivateReply(params: {
   automation: AutomationWithAccountAndLinks;
@@ -37,6 +38,23 @@ export async function deliverPrivateReply(params: {
   await applyDangerZoneBackoff();
 
   const accountId = automation.instagramAccount.id;
+
+  // Meta Compliance: Never reply to self-comments or unknown commenters
+  if (!commenterId || commenterId === "unknown" || commenterId === automation.instagramAccount.instagramId) {
+    return;
+  }
+
+  const windowStatus = await hasOpen24HourWindow(
+    automation.instagramAccount.instagramId,
+    commenterId
+  ).catch(() => ({ open: false, isHumanHandover: false, lastInteractedAt: null }));
+
+  if (windowStatus.isHumanHandover) {
+    console.info(`[Compliance] Skipping comment DM delivery for ${commenterId}: Human handover active.`);
+    return;
+  }
+
+  const hasOpen24hWindow = windowStatus.open;
 
   const hasFlowGraph =
     automation.flowGraph &&
@@ -72,12 +90,14 @@ export async function deliverPrivateReply(params: {
       }
 
       if (step.enrollDripCampaignId && step.enrollDripCampaignId.trim()) {
-        await enrollUserInDrip({
-          workspaceId: automation.workspaceId,
-          instagramAccountId: automation.instagramAccount.instagramId,
-          userId: commenterId,
-          campaignId: step.enrollDripCampaignId.trim(),
-        });
+        if (hasOpen24hWindow) {
+          await enrollUserInDrip({
+            workspaceId: automation.workspaceId,
+            instagramAccountId: automation.instagramAccount.instagramId,
+            userId: commenterId,
+            campaignId: step.enrollDripCampaignId.trim(),
+          });
+        }
       }
 
       if (step.isHumanHandover) {
@@ -85,19 +105,51 @@ export async function deliverPrivateReply(params: {
       }
 
       if (step.nodeType === "smart_delay" && step.nextStepNodeId && (step.delayMs || step.delayMinutes)) {
-        const delayMs = step.delayMs || (step.delayMinutes || 5) * 60_000;
-        await enqueueJob(
-          "resume-flow-node",
-          {
-            instagramAccountId: automation.instagramAccount.instagramId,
-            userId: commenterId,
-            username: commenterName ?? undefined,
-            automationId: automation.id,
-            startNodeId: step.nextStepNodeId,
-          },
-          delayMs
-        );
+        if (hasOpen24hWindow) {
+          const delayMs = step.delayMs || (step.delayMinutes || 5) * 60_000;
+          await enqueueJob(
+            "resume-flow-node",
+            {
+              instagramAccountId: automation.instagramAccount.instagramId,
+              userId: commenterId,
+              username: commenterName ?? undefined,
+              automationId: automation.id,
+              startNodeId: step.nextStepNodeId,
+            },
+            delayMs
+          );
+        }
         continue;
+      }
+
+      // Meta Compliance Guard: A comment trigger only allows ONE private_reply unless
+      // the user already has an open 24-hour DM window from an earlier interaction.
+      if (sentPrivateReplyForComment && !hasOpen24hWindow) {
+        if (step.requiresInput) {
+          await prisma.conversationState.upsert({
+            where: {
+              instagramAccountId_userId: {
+                instagramAccountId: automation.instagramAccount.instagramId,
+                userId: commenterId,
+              },
+            },
+            create: {
+              workspaceId: automation.workspaceId,
+              instagramAccountId: automation.instagramAccount.instagramId,
+              userId: commenterId,
+              automationId: automation.id,
+              activeNodeId: step.nodeId,
+              step: "FLOW_NODE",
+            },
+            update: {
+              automationId: automation.id,
+              activeNodeId: step.nodeId,
+              step: "FLOW_NODE",
+              updatedAt: new Date(),
+            },
+          });
+        }
+        break;
       }
 
       if (step.isAiReply) {
@@ -112,7 +164,7 @@ export async function deliverPrivateReply(params: {
             if (!sentPrivateReplyForComment) {
               await providerManager.privateReply(accountId, commentId, smartReply);
               sentPrivateReplyForComment = true;
-            } else {
+            } else if (hasOpen24hWindow) {
               await providerManager.sendTextMessage(accountId, commenterId, smartReply);
             }
           }
@@ -148,27 +200,56 @@ export async function deliverPrivateReply(params: {
       }
 
       if (step.mediaToSend && step.mediaToSend.mediaUrl) {
-        const attType = step.mediaToSend.mediaType === "audio" ? "voice" : step.mediaToSend.mediaType;
-        await providerManager.sendAttachment(accountId, commenterId, attType, step.mediaToSend.mediaUrl);
-        if (step.mediaToSend.caption && step.mediaToSend.mediaType !== "audio") {
-          await providerManager.sendTextMessage(accountId, commenterId, step.mediaToSend.caption);
+        if (!sentPrivateReplyForComment && !hasOpen24hWindow) {
+          // Cannot call sendAttachment without an open 24h DM window; use privateReply teaser/link
+          const fallbackBody =
+            selectDmMessageVariation(step.mediaToSend.caption) ||
+            "سلام! برای دریافت فایل یا تصویر، لطفاً همین‌جا یک پیام بفرستید 🙏";
+          await providerManager.privateReply(accountId, commentId, fallbackBody);
+          sentPrivateReplyForComment = true;
+        } else if (hasOpen24hWindow) {
+          const attType = step.mediaToSend.mediaType === "audio" ? "voice" : step.mediaToSend.mediaType;
+          await providerManager.sendAttachment(accountId, commenterId, attType, step.mediaToSend.mediaUrl);
+          if (step.mediaToSend.caption && step.mediaToSend.mediaType !== "audio") {
+            await providerManager.sendTextMessage(
+              accountId,
+              commenterId,
+              selectDmMessageVariation(step.mediaToSend.caption)
+            );
+          }
         }
       } else if (step.carouselToSend && step.carouselToSend.cards.length > 0) {
-        const elements = step.carouselToSend.cards.map((c) => ({
-          title: c.title || "محصول",
-          subtitle: c.subtitle,
-          image_url: c.imageUrl,
-          buttons: c.buttons
-            .filter((b) => b.title && (b.type === "postback" || (b.url && b.url !== "https://")))
-            .map((b) =>
-              b.type === "postback"
-                ? { type: "postback" as const, title: b.title, payload: b.payload || `flow_btn:${automation.id}:${step.nodeId}:${b.id}` }
-                : { type: "web_url" as const, title: b.title, url: b.url || "#" }
-            ),
-        }));
-        await providerManager.sendGenericTemplate(accountId, commenterId, elements);
+        if (!sentPrivateReplyForComment && !hasOpen24hWindow) {
+          const firstCard = step.carouselToSend.cards[0];
+          const firstBtn = firstCard.buttons?.find((b) => b.title && b.url && b.url !== "https://");
+          const fallbackMsg = `${firstCard.title || "پیشنهاد ویژه"}${firstCard.subtitle ? `\n${firstCard.subtitle}` : ""}`;
+          if (firstBtn) {
+            await providerManager.privateReply(accountId, commentId, fallbackMsg, {
+              buttons: [{ type: "web_url", title: firstBtn.title, url: firstBtn.url || "#" }],
+            });
+          } else {
+            await providerManager.privateReply(accountId, commentId, fallbackMsg);
+          }
+          sentPrivateReplyForComment = true;
+        } else if (hasOpen24hWindow) {
+          const elements = step.carouselToSend.cards.map((c) => ({
+            title: c.title || "محصول",
+            subtitle: c.subtitle,
+            image_url: c.imageUrl,
+            buttons: c.buttons
+              .filter((b) => b.title && (b.type === "postback" || (b.url && b.url !== "https://")))
+              .map((b) =>
+                b.type === "postback"
+                  ? { type: "postback" as const, title: b.title, payload: b.payload || `flow_btn:${automation.id}:${step.nodeId}:${b.id}` }
+                  : { type: "web_url" as const, title: b.title, url: b.url || "#" }
+              ),
+          }));
+          await providerManager.sendGenericTemplate(accountId, commenterId, elements);
+        }
       } else if (step.quickRepliesToSend && step.quickRepliesToSend.chips.length > 0) {
-        const qrBody = step.quickRepliesToSend.text || step.dmMessageToSend || "لطفاً یکی از گزینه‌ها رو انتخاب کنید:";
+        const qrBody = selectDmMessageVariation(
+          step.quickRepliesToSend.text || step.dmMessageToSend || "لطفاً یکی از گزینه‌ها رو انتخاب کنید:"
+        );
         const qrs = step.quickRepliesToSend.chips.map((c) => ({
           content_type: "text" as const,
           title: c.title,
@@ -177,13 +258,15 @@ export async function deliverPrivateReply(params: {
         if (!sentPrivateReplyForComment) {
           await providerManager.privateReply(accountId, commentId, qrBody);
           sentPrivateReplyForComment = true;
-          await providerManager.sendTextMessage(accountId, commenterId, qrBody, { quick_replies: qrs }).catch(() => {});
-        } else {
+          if (hasOpen24hWindow) {
+            await providerManager.sendTextMessage(accountId, commenterId, qrBody, { quick_replies: qrs }).catch(() => {});
+          }
+        } else if (hasOpen24hWindow) {
           await providerManager.sendTextMessage(accountId, commenterId, qrBody, { quick_replies: qrs });
         }
       } else if (step.buttons && step.buttons.length > 0) {
         const bodyText = renderMessageWithTracking({
-          message: step.dmMessageToSend || "لطفاً یکی از گزینه‌ها رو انتخاب کنید:",
+          message: selectDmMessageVariation(step.dmMessageToSend || "لطفاً یکی از گزینه‌ها رو انتخاب کنید:"),
           commenterName,
           trackedLinks: automation.trackedLinks,
         });
@@ -196,30 +279,31 @@ export async function deliverPrivateReply(params: {
         if (!sentPrivateReplyForComment) {
           await providerManager.privateReply(accountId, commentId, bodyText, { buttons: metaButtons });
           sentPrivateReplyForComment = true;
-        } else {
+        } else if (hasOpen24hWindow) {
           await providerManager.sendTextMessage(accountId, commenterId, bodyText, { buttons: metaButtons });
         }
       } else if (step.dmMessageToSend) {
+        const selectedFlowMsg = selectDmMessageVariation(step.dmMessageToSend);
         if (step.linkButton) {
           const msgOpts = {
             buttons: [{ type: "web_url" as const, title: step.linkButton.label, url: step.linkButton.url }],
           };
           if (!sentPrivateReplyForComment) {
-            await providerManager.privateReply(accountId, commentId, step.dmMessageToSend, msgOpts);
+            await providerManager.privateReply(accountId, commentId, selectedFlowMsg, msgOpts);
             sentPrivateReplyForComment = true;
-          } else {
-            await providerManager.sendTextMessage(accountId, commenterId, step.dmMessageToSend, msgOpts);
+          } else if (hasOpen24hWindow) {
+            await providerManager.sendTextMessage(accountId, commenterId, selectedFlowMsg, msgOpts);
           }
         } else {
           const dmMessage = renderMessageWithTracking({
-            message: step.dmMessageToSend,
+            message: selectedFlowMsg,
             commenterName,
             trackedLinks: automation.trackedLinks,
           });
           if (!sentPrivateReplyForComment) {
             await providerManager.privateReply(accountId, commentId, dmMessage);
             sentPrivateReplyForComment = true;
-          } else {
+          } else if (hasOpen24hWindow) {
             await providerManager.sendTextMessage(accountId, commenterId, dmMessage);
           }
         }
@@ -257,8 +341,9 @@ export async function deliverPrivateReply(params: {
   let sendResult: any = null;
 
   if (useOpeningDm) {
+    const selectedOpening = selectDmMessageVariation(automation.openingDmMessage as string);
     const openingText = renderMessageWithTracking({
-      message: automation.openingDmMessage as string,
+      message: selectedOpening,
       commenterName,
       trackedLinks: [],
     });
@@ -280,10 +365,11 @@ export async function deliverPrivateReply(params: {
     // Always use Instagram's single allowed privateReply slot to send the first Lead Form prompt.
     // Any configured `dmMessage` ("And then, they will get") is delivered AFTER the form completes.
     const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
-    const promptText =
+    const promptText = selectDmMessageVariation(
       initialStep === "AWAITING_NAME"
         ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
-        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱";
+        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱"
+    );
 
     sendResult = await providerManager.privateReply(accountId, commentId, promptText);
   } else if (automation.trackedLinks[0]) {
@@ -417,16 +503,18 @@ export async function deliverPostbackReveal(params: {
       },
     });
 
-    const promptText =
+    const promptText = selectDmMessageVariation(
       initialStep === "AWAITING_NAME"
         ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
-        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱";
+        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱"
+    );
 
     await providerManager.sendTextMessage(accountId, userId, promptText);
   } else if (primaryLink) {
+    const selectedRevealMsg = selectDmMessageVariation(automation.dmMessage);
     const bodyText =
       renderMessageWithoutLink({
-        message: automation.dmMessage,
+        message: selectedRevealMsg,
         commenterName,
       }) || "Here's your link:";
     await providerManager.sendTextMessage(
@@ -445,7 +533,7 @@ export async function deliverPostbackReveal(params: {
     );
   } else {
     const revealMessage = renderMessageWithTracking({
-      message: automation.dmMessage,
+      message: selectDmMessageVariation(automation.dmMessage),
       commenterName,
       trackedLinks: automation.trackedLinks,
     });

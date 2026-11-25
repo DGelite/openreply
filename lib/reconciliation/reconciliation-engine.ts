@@ -8,6 +8,7 @@
 import { prisma } from "@/lib/db/client";
 import { enqueueJob } from "@/lib/queue/mysql-queue";
 import { BoxApiClient } from "@/lib/providers/boxapi/boxapi-client";
+import { isCommentWithin7DayWindow } from "@/lib/meta/compliance";
 import crypto from "crypto";
 
 export interface ReconciliationResult {
@@ -130,6 +131,29 @@ export async function reconcileAccountPostComments(
     const commenterUsername =
       comment.user?.username || comment.from?.username || comment.username || "user";
     const commentText = comment.text || comment.message || "";
+    const commentCreatedAt = comment.timestamp || comment.created_at || undefined;
+
+    // Compliance & anti-loop guards:
+    // 1. Skip own account comments
+    if (
+      (commenterId && commenterId === account.instagramId) ||
+      (account.username && commenterUsername.toLowerCase() === account.username.toLowerCase())
+    ) {
+      continue;
+    }
+
+    // 2. Skip comments older than Meta's 7-day private-reply window
+    if (!isCommentWithin7DayWindow(commentCreatedAt)) {
+      continue;
+    }
+
+    // 3. Skip comments already replied to by the account owner
+    const ownerReplied = Array.isArray(comment.replies?.data)
+      ? comment.replies.data.some((r: any) => r?.from?.id === account.instagramId)
+      : false;
+    if (ownerReplied) {
+      continue;
+    }
 
     const idempotencyKey = `BOXAPI_${account.id}_${commentId}`;
 
@@ -173,6 +197,8 @@ export async function reconcileAccountPostComments(
       commenterId: commenterId || "unknown",
       commenterName: commenterUsername,
       mediaId: postId,
+      commentCreatedAt,
+      source: "POLLING",
     });
 
     recoveredCount++;

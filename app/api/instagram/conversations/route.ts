@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
+import { hasOpen24HourWindow } from "@/lib/meta/compliance";
+import { providerManager } from "@/lib/providers/manager/provider-manager";
 import {
   getConversations,
   sendDirectMessage,
@@ -146,13 +148,30 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const accessToken = safeDecryptToken(account.accessToken);
-    const result = await sendDirectMessage(
-      accessToken,
-      account.instagramId,
+    // Meta Compliance: Enforce 24-hour standard messaging window if tracked in ConversationState
+    const windowCheck = await hasOpen24HourWindow(account.instagramId, body.recipientId);
+    if (windowCheck.lastInteractedAt && !windowCheck.open) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "پنجره ۲۴ ساعته پاسخ‌گویی متا برای این مخاطب بسته شده است. طبق قوانین اینستاگرام تا زمانی که مخاطب پیام جدید ندهد امکان ارسال دایرکت وجود ندارد.",
+        },
+        { status: 422 }
+      );
+    }
+
+    const result = await providerManager.sendTextMessage(
+      account.id,
       body.recipientId,
       text
     );
+    if (!result.success) {
+      return NextResponse.json(
+        { success: false, error: result.error || "Failed to send message" },
+        { status: 502 }
+      );
+    }
     return NextResponse.json({ success: true, data: result });
   } catch (err) {
     console.error("[Conversations] Send error:", err);

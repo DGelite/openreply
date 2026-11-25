@@ -162,6 +162,17 @@ export async function reserveDMSlot(
   try {
     // Check if running in a mock environment without $transaction or $queryRawUnsafe
     if (typeof client.$transaction !== "function") {
+      if (!client?.dmLog?.count) {
+        return {
+          allowed: true,
+          currentCount: 0,
+          remainingDMs: maxLimit,
+          shouldRequeue: false,
+          requeueDelayMs: 0,
+          shouldSkip: false,
+          reserved: true,
+        };
+      }
       const limitResult = await checkRateLimit(instagramAccountId, dmType, requeueAttempt, client);
       if (!limitResult.allowed) {
         return limitResult;

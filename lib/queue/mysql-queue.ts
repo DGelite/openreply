@@ -11,6 +11,7 @@ export interface ProcessCommentJob {
   commenterId: string;
   commenterName?: string;
   mediaId: string;
+  commentCreatedAt?: number | string;
   requeueAttempt?: number;
   source?: CommentSource;
 }
