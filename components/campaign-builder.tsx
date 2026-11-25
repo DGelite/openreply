@@ -84,6 +84,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [collectPhoneSkipOtp, setCollectPhoneSkipOtp] = useState(false);
   const [autoVerifyAndBook, setAutoVerifyAndBook] = useState(false);
   const [leadSuccessMessage, setLeadSuccessMessage] = useState("عالیه! اطلاعاتتون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏");
+  const [hasExistingFlowGraph, setHasExistingFlowGraph] = useState(false);
 
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 
@@ -192,6 +193,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         if (c.collectPhoneSkipOtp) setCollectPhoneSkipOtp(true);
         if (c.autoVerifyAndBook) setAutoVerifyAndBook(true);
         if (c.leadSuccessMessage) setLeadSuccessMessage(c.leadSuccessMessage);
+        setHasExistingFlowGraph(Boolean(c.flowGraph?.nodes && c.flowGraph.nodes.length > 0));
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -331,6 +333,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       collectPhoneSkipOtp: leadFormEnabled && collectPhone ? collectPhoneSkipOtp : false,
       autoVerifyAndBook: leadFormEnabled ? autoVerifyAndBook : false,
       leadSuccessMessage: leadFormEnabled && (collectName || collectPhone) ? leadSuccessMessage.trim() : null,
+      ...(mode === "edit" ? { clearFlowGraph: true } : {}),
     };
 
     try {
@@ -455,6 +458,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
 
   return (
     <div className="space-y-6">
+      {hasExistingFlowGraph && (
+        <div className="rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-amber-200">
+          ⚠️ این کمپین قبلاً در <strong>Visual Flow Builder</strong> ذخیره شده بود. با ذخیره این فرم، تنظیمات همین صفحه (شامل فرم دریافت مشخصات لید و کلمات کلیدی) جایگزین فلو گراف قبلی می‌شود تا تداخلی پیش نیاید.
+        </div>
+      )}
       {importQueue && (
         <div className="rounded border border-accent/30 bg-accent/5 px-4 py-3 text-sm">
           <span className="font-medium text-foreground">

@@ -29,6 +29,7 @@ export interface LoadedCampaign {
   autoVerifyAndBook?: boolean;
   confirmBeforeSave?: boolean;
   confirmMessage?: string | null;
+  flowGraph?: { nodes?: unknown[] } | null;
   trackedLinks?: { destinationUrl: string }[];
 }
 

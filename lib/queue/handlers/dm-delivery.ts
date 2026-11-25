@@ -79,6 +79,7 @@ export async function deliverPrivateReply(params: {
     );
 
     let sentPrivateReplyForComment = false;
+    let sentAnyDm = false;
 
     for (const step of graphResults) {
       if (step.tagAction && step.tagAction.tagName?.trim()) {
@@ -162,10 +163,14 @@ export async function deliverPrivateReply(params: {
           });
           if (smartReply) {
             if (!sentPrivateReplyForComment) {
-              await providerManager.privateReply(accountId, commentId, smartReply);
-              sentPrivateReplyForComment = true;
+              const prRes = await providerManager.privateReply(accountId, commentId, smartReply);
+              if (prRes?.success !== false) {
+                sentPrivateReplyForComment = true;
+                sentAnyDm = true;
+              }
             } else if (hasOpen24hWindow) {
-              await providerManager.sendTextMessage(accountId, commenterId, smartReply);
+              const dmRes = await providerManager.sendTextMessage(accountId, commenterId, smartReply);
+              if (dmRes?.success !== false) sentAnyDm = true;
             }
           }
         } catch (aiErr) {
@@ -205,17 +210,22 @@ export async function deliverPrivateReply(params: {
           const fallbackBody =
             selectDmMessageVariation(step.mediaToSend.caption) ||
             "سلام! برای دریافت فایل یا تصویر، لطفاً همین‌جا یک پیام بفرستید 🙏";
-          await providerManager.privateReply(accountId, commentId, fallbackBody);
-          sentPrivateReplyForComment = true;
+          const prRes = await providerManager.privateReply(accountId, commentId, fallbackBody);
+          if (prRes?.success !== false) {
+            sentPrivateReplyForComment = true;
+            sentAnyDm = true;
+          }
         } else if (hasOpen24hWindow) {
           const attType = step.mediaToSend.mediaType === "audio" ? "voice" : step.mediaToSend.mediaType;
-          await providerManager.sendAttachment(accountId, commenterId, attType, step.mediaToSend.mediaUrl);
+          const attRes = await providerManager.sendAttachment(accountId, commenterId, attType, step.mediaToSend.mediaUrl);
+          if (attRes?.success !== false) sentAnyDm = true;
           if (step.mediaToSend.caption && step.mediaToSend.mediaType !== "audio") {
-            await providerManager.sendTextMessage(
+            const capRes = await providerManager.sendTextMessage(
               accountId,
               commenterId,
               selectDmMessageVariation(step.mediaToSend.caption)
             );
+            if (capRes?.success !== false) sentAnyDm = true;
           }
         }
       } else if (step.carouselToSend && step.carouselToSend.cards.length > 0) {
@@ -223,14 +233,15 @@ export async function deliverPrivateReply(params: {
           const firstCard = step.carouselToSend.cards[0];
           const firstBtn = firstCard.buttons?.find((b) => b.title && b.url && b.url !== "https://");
           const fallbackMsg = `${firstCard.title || "پیشنهاد ویژه"}${firstCard.subtitle ? `\n${firstCard.subtitle}` : ""}`;
-          if (firstBtn) {
-            await providerManager.privateReply(accountId, commentId, fallbackMsg, {
-              buttons: [{ type: "web_url", title: firstBtn.title, url: firstBtn.url || "#" }],
-            });
-          } else {
-            await providerManager.privateReply(accountId, commentId, fallbackMsg);
+          const prRes = firstBtn
+            ? await providerManager.privateReply(accountId, commentId, fallbackMsg, {
+                buttons: [{ type: "web_url", title: firstBtn.title, url: firstBtn.url || "#" }],
+              })
+            : await providerManager.privateReply(accountId, commentId, fallbackMsg);
+          if (prRes?.success !== false) {
+            sentPrivateReplyForComment = true;
+            sentAnyDm = true;
           }
-          sentPrivateReplyForComment = true;
         } else if (hasOpen24hWindow) {
           const elements = step.carouselToSend.cards.map((c) => ({
             title: c.title || "محصول",
@@ -244,7 +255,8 @@ export async function deliverPrivateReply(params: {
                   : { type: "web_url" as const, title: b.title, url: b.url || "#" }
               ),
           }));
-          await providerManager.sendGenericTemplate(accountId, commenterId, elements);
+          const carRes = await providerManager.sendGenericTemplate(accountId, commenterId, elements);
+          if (carRes?.success !== false) sentAnyDm = true;
         }
       } else if (step.quickRepliesToSend && step.quickRepliesToSend.chips.length > 0) {
         const qrBody = selectDmMessageVariation(
@@ -256,13 +268,17 @@ export async function deliverPrivateReply(params: {
           payload: c.payload || c.title,
         }));
         if (!sentPrivateReplyForComment) {
-          await providerManager.privateReply(accountId, commentId, qrBody);
-          sentPrivateReplyForComment = true;
+          const prRes = await providerManager.privateReply(accountId, commentId, qrBody);
+          if (prRes?.success !== false) {
+            sentPrivateReplyForComment = true;
+            sentAnyDm = true;
+          }
           if (hasOpen24hWindow) {
             await providerManager.sendTextMessage(accountId, commenterId, qrBody, { quick_replies: qrs }).catch(() => {});
           }
         } else if (hasOpen24hWindow) {
-          await providerManager.sendTextMessage(accountId, commenterId, qrBody, { quick_replies: qrs });
+          const qrRes = await providerManager.sendTextMessage(accountId, commenterId, qrBody, { quick_replies: qrs });
+          if (qrRes?.success !== false) sentAnyDm = true;
         }
       } else if (step.buttons && step.buttons.length > 0) {
         const bodyText = renderMessageWithTracking({
@@ -277,10 +293,14 @@ export async function deliverPrivateReply(params: {
           payload: b.payload,
         }));
         if (!sentPrivateReplyForComment) {
-          await providerManager.privateReply(accountId, commentId, bodyText, { buttons: metaButtons });
-          sentPrivateReplyForComment = true;
+          const prRes = await providerManager.privateReply(accountId, commentId, bodyText, { buttons: metaButtons });
+          if (prRes?.success !== false) {
+            sentPrivateReplyForComment = true;
+            sentAnyDm = true;
+          }
         } else if (hasOpen24hWindow) {
-          await providerManager.sendTextMessage(accountId, commenterId, bodyText, { buttons: metaButtons });
+          const btnRes = await providerManager.sendTextMessage(accountId, commenterId, bodyText, { buttons: metaButtons });
+          if (btnRes?.success !== false) sentAnyDm = true;
         }
       } else if (step.dmMessageToSend) {
         const selectedFlowMsg = selectDmMessageVariation(step.dmMessageToSend);
@@ -289,10 +309,14 @@ export async function deliverPrivateReply(params: {
             buttons: [{ type: "web_url" as const, title: step.linkButton.label, url: step.linkButton.url }],
           };
           if (!sentPrivateReplyForComment) {
-            await providerManager.privateReply(accountId, commentId, selectedFlowMsg, msgOpts);
-            sentPrivateReplyForComment = true;
+            const prRes = await providerManager.privateReply(accountId, commentId, selectedFlowMsg, msgOpts);
+            if (prRes?.success !== false) {
+              sentPrivateReplyForComment = true;
+              sentAnyDm = true;
+            }
           } else if (hasOpen24hWindow) {
-            await providerManager.sendTextMessage(accountId, commenterId, selectedFlowMsg, msgOpts);
+            const lnkRes = await providerManager.sendTextMessage(accountId, commenterId, selectedFlowMsg, msgOpts);
+            if (lnkRes?.success !== false) sentAnyDm = true;
           }
         } else {
           const dmMessage = renderMessageWithTracking({
@@ -301,10 +325,14 @@ export async function deliverPrivateReply(params: {
             trackedLinks: automation.trackedLinks,
           });
           if (!sentPrivateReplyForComment) {
-            await providerManager.privateReply(accountId, commentId, dmMessage);
-            sentPrivateReplyForComment = true;
+            const prRes = await providerManager.privateReply(accountId, commentId, dmMessage);
+            if (prRes?.success !== false) {
+              sentPrivateReplyForComment = true;
+              sentAnyDm = true;
+            }
           } else if (hasOpen24hWindow) {
-            await providerManager.sendTextMessage(accountId, commenterId, dmMessage);
+            const dmRes = await providerManager.sendTextMessage(accountId, commenterId, dmMessage);
+            if (dmRes?.success !== false) sentAnyDm = true;
           }
         }
       }
@@ -321,11 +349,19 @@ export async function deliverPrivateReply(params: {
           commentId,
         },
       },
-      data: {
-        status: "SENT",
-        dmSentAt: new Date(),
-        errorMessage: null,
-      },
+      data: sentAnyDm
+        ? {
+            status: "SENT",
+            dmSentAt: new Date(),
+            errorMessage: null,
+          }
+        : {
+            status: "FAILED",
+            errorMessage:
+              graphResults.length === 0
+                ? "Flow trigger did not match comment keywords"
+                : "Flow produced no outbound message",
+          },
     });
     return;
   }

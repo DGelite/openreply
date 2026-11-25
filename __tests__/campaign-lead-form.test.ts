@@ -225,4 +225,54 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
     expect(leadUpsertSpy).not.toHaveBeenCalled();
     expect(convUpsertSpy).not.toHaveBeenCalled();
   });
+
+  it("marks DmLog FAILED instead of SENT when flowGraph produces zero outbound messages", async () => {
+    const dmLogUpdateSpy = vi.spyOn(prisma.dmLog, "update").mockResolvedValue({} as any);
+    vi.spyOn(prisma.conversationState, "findUnique").mockResolvedValue(null);
+    vi.spyOn(prisma.leadTag, "findMany").mockResolvedValue([] as any);
+    const privateReplySpy = vi.spyOn(providerManager, "privateReply");
+
+    await deliverPrivateReply({
+      automation: {
+        id: "auto_mismatch",
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_row_1",
+        dmMessage: "",
+        trackedLinks: [],
+        instagramAccount: { id: "ig_row_1", instagramId: "ig_page_1" },
+        flowGraph: {
+          nodes: [
+            {
+              id: "trig",
+              type: "trigger",
+              position: { x: 0, y: 0 },
+              data: {
+                type: "trigger",
+                config: { triggerType: "COMMENT_KEYWORD", keywords: ["قیمت"], matchAnyWord: false },
+              },
+            },
+            {
+              id: "dm1",
+              type: "send_dm",
+              position: { x: 0, y: 100 },
+              data: { type: "send_dm", config: { message: "قیمت محصول" } },
+            },
+          ],
+          edges: [{ id: "e1", sourceNodeId: "trig", targetNodeId: "dm1" }],
+        },
+      } as any,
+      accessToken: "",
+      commentId: "cmt_mismatch",
+      commenterId: "user_1",
+      commenterName: "test_user",
+      commentText: "122",
+    });
+
+    expect(privateReplySpy).not.toHaveBeenCalled();
+    expect(dmLogUpdateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "FAILED" }),
+      })
+    );
+  });
 });

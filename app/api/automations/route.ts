@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
+import { Prisma } from "@/lib/generated/prisma/client";
 import { calculateCtr, normalizeTopKeywords } from "@/lib/tracking/analytics";
 import { buildTrackedUrl } from "@/lib/tracking/message";
 import { generateTrackedLinkSlug } from "@/lib/tracking/server";
@@ -115,6 +116,7 @@ const updateAutomationSchema = z.object({
   autoVerifyAndBook: z.boolean().optional(),
   confirmBeforeSave: z.boolean().optional(),
   confirmMessage: z.string().max(1000).optional().nullable(),
+  clearFlowGraph: z.boolean().optional(),
   // Empty string clears the tracked link; a URL updates/creates it; undefined
   // leaves it unchanged.
   trackedDestinationUrl: z
@@ -504,7 +506,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const { trackedDestinationUrl, ...automationData } = parsed.data;
+  const { trackedDestinationUrl, clearFlowGraph, ...automationData } = parsed.data;
 
   // Keep dependent fields consistent: any-word clears keywords; a disabled
   // opening DM clears its message and button.
@@ -531,9 +533,44 @@ export async function PATCH(request: NextRequest) {
     automationData.publicReplyMessage = null;
   }
 
+  // If saved from the standard Campaign Builder, clear any stale Visual Flow Graph
+  // so Lead Capture Form / Opening DM / Tracked Link execute as configured.
+  // Otherwise, keep trigger keywords inside flowGraph synchronized with automation keywords.
+  const updatePayload: any = { ...automationData };
+  if (clearFlowGraph) {
+    updatePayload.flowGraph = Prisma.DbNull;
+  } else if (
+    existing.flowGraph &&
+    typeof existing.flowGraph === "object" &&
+    Array.isArray((existing.flowGraph as any).nodes) &&
+    (automationData.keywords !== undefined ||
+      automationData.matchAnyWord !== undefined ||
+      automationData.wholeWordMatch !== undefined)
+  ) {
+    const graphCopy = JSON.parse(JSON.stringify(existing.flowGraph));
+    graphCopy.nodes = graphCopy.nodes.map((n: any) => {
+      if (n?.type === "trigger" && n?.data?.config) {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            config: {
+              ...n.data.config,
+              ...(automationData.keywords !== undefined ? { keywords: automationData.keywords } : {}),
+              ...(automationData.matchAnyWord !== undefined ? { matchAnyWord: automationData.matchAnyWord } : {}),
+              ...(automationData.wholeWordMatch !== undefined ? { wholeWordMatch: automationData.wholeWordMatch } : {}),
+            },
+          },
+        };
+      }
+      return n;
+    });
+    updatePayload.flowGraph = graphCopy;
+  }
+
   const updated = await prisma.automation.update({
     where: { id: automationId },
-    data: automationData,
+    data: updatePayload,
   });
 
   // Update, create, or clear the campaign's primary tracked link when a
