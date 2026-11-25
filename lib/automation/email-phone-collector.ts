@@ -89,6 +89,32 @@ export async function processLeadStep(params: {
     // NEVER save numbers (e.g. "122"), greetings, or invalid text as a person's name!
     if (!name) {
       if (phoneFromNorm) {
+        const existingConv = await prisma.conversationState.findUnique({
+          where: { instagramAccountId_userId: { instagramAccountId, userId } },
+          select: { metadata: true },
+        });
+        const prevMeta =
+          existingConv?.metadata && typeof existingConv.metadata === "object"
+            ? (existingConv.metadata as Record<string, unknown>)
+            : {};
+
+        await prisma.conversationState.upsert({
+          where: { instagramAccountId_userId: { instagramAccountId, userId } },
+          create: {
+            workspaceId,
+            instagramAccountId,
+            userId,
+            step: "AWAITING_NAME",
+            automationId,
+            metadata: { ...prevMeta, phoneCapturedInCurrentForm: true },
+          },
+          update: {
+            step: "AWAITING_NAME",
+            automationId,
+            metadata: { ...prevMeta, phoneCapturedInCurrentForm: true },
+          },
+        });
+
         await prisma.lead.upsert({
           where: { id: `lead_${instagramAccountId}_${userId}` },
           create: {
@@ -98,6 +124,7 @@ export async function processLeadStep(params: {
             userId,
             username,
             phone: phoneFromNorm,
+            phoneVerified: true,
             phoneNotes: notesFromNorm || undefined,
             sourceAutomationId: automationId,
             provider,
@@ -106,6 +133,7 @@ export async function processLeadStep(params: {
           },
           update: {
             phone: phoneFromNorm,
+            phoneVerified: true,
             phoneNotes: notesFromNorm || undefined,
             username: username ?? undefined,
             sourceAutomationId: automationId ?? undefined,
@@ -162,12 +190,23 @@ export async function processLeadStep(params: {
       },
     });
 
-    const automation = automationId
-      ? await prisma.automation.findUnique({ where: { id: automationId } })
-      : null;
+    const [automation, currentConvState] = await Promise.all([
+      automationId ? prisma.automation.findUnique({ where: { id: automationId } }) : null,
+      prisma.conversationState.findUnique({
+        where: { instagramAccountId_userId: { instagramAccountId, userId } },
+        select: { metadata: true },
+      }),
+    ]);
 
-    const hasVerifiedPhoneAlready = Boolean(savedLead.phone && savedLead.phoneVerified);
-    if (automation?.collectPhone && !hasVerifiedPhoneAlready) {
+    const convMeta =
+      currentConvState?.metadata && typeof currentConvState.metadata === "object"
+        ? (currentConvState.metadata as Record<string, unknown>)
+        : {};
+    // Only skip asking phone if phone was captured INSIDE THIS CURRENT FORM (same message or phone-first step)
+    const phoneCapturedThisRun = Boolean(
+      phoneFromNorm || (convMeta.phoneCapturedInCurrentForm === true && savedLead.phone)
+    );
+    if (automation?.collectPhone && !phoneCapturedThisRun) {
       await prisma.conversationState.upsert({
         where: {
           instagramAccountId_userId: { instagramAccountId, userId },

@@ -275,4 +275,40 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
       })
     );
   });
+
+  it("still asks for phone on a new form even if the user had an older verified phone in Lead table", async () => {
+    vi.spyOn(prisma.aiConfig, "findUnique").mockResolvedValue({
+      isEnabled: false,
+      safetySettings: { leadNormalizer: { enabled: false } },
+    } as any);
+    vi.spyOn(prisma.lead, "upsert").mockResolvedValue({
+      id: "lead_1",
+      name: "آرمین طهماسبی",
+      phone: "09133702778",
+      phoneVerified: true, // Old phone from earlier campaign/test
+    } as any);
+    vi.spyOn(prisma.automation, "findUnique").mockResolvedValue({
+      id: "auto_1",
+      collectName: true,
+      collectPhone: true,
+      leadPromptPhone: "لطفاً شماره‌تون رو بفرستید 📱",
+    } as any);
+    vi.spyOn(prisma.conversationState, "findUnique").mockResolvedValue({
+      metadata: {}, // Current form did NOT capture phone yet
+    } as any);
+    vi.spyOn(prisma.conversationState, "upsert").mockResolvedValue({} as any);
+
+    const res = await processLeadStep({
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "user_1",
+      userMessage: "آرمین طهماسبی",
+      currentStep: "AWAITING_NAME",
+      automationId: "auto_1",
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.nextStep).toBe("AWAITING_PHONE");
+    expect(res.replyMessage).toBe("لطفاً شماره‌تون رو بفرستید 📱");
+  });
 });
