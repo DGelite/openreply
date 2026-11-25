@@ -3,6 +3,33 @@ import { syncLeadToWampCrm } from "./crm-sync";
 import { SmsIrClient } from "@/lib/services/sms-ir-client";
 import { extractPhoneNumber, normalizeNumerals } from "@/lib/ai/phone-extractor";
 import { normalizeLeadData, isValidHumanName } from "@/lib/ai/lead-normalizer";
+import { selectDmMessageVariation } from "./ab-testing";
+
+/**
+ * Merges the lead form completion message (`leadSuccessMessage`) and the campaign's
+ * promised follow-up / link text (`dmMessage`) into a single DM message so Instagram
+ * never delivers two consecutive bubbles out-of-order.
+ */
+export function buildMergedLeadCompletionText(params: {
+  successMessage?: string | null;
+  dmMessage?: string | null;
+}): string {
+  const cleanSuccess = params.successMessage?.trim()
+    ? selectDmMessageVariation(params.successMessage.trim())
+    : "";
+  const cleanDm = params.dmMessage?.trim()
+    ? selectDmMessageVariation(params.dmMessage.trim())
+    : "";
+
+  const parts: string[] = [];
+  if (cleanSuccess) parts.push(cleanSuccess);
+  if (cleanDm && cleanDm !== cleanSuccess) parts.push(cleanDm);
+
+  return (
+    parts.join("\n\n") ||
+    "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏"
+  );
+}
 
 /**
  * Validates an email address.

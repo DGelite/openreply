@@ -22,7 +22,13 @@ import { registerGiveawayEntry } from "./giveaway-engine";
 import { claimCoupon } from "./coupon-engine";
 import { matchFaq } from "./faq-engine";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
-import { validatePhone, validateEmail, savePhoneLeadDirectly, processLeadStep } from "./email-phone-collector";
+import {
+  validatePhone,
+  validateEmail,
+  savePhoneLeadDirectly,
+  processLeadStep,
+  buildMergedLeadCompletionText,
+} from "./email-phone-collector";
 import { checkHumanHandoverState, setHumanHandover } from "./human-handover";
 import { generateSmartResponse } from "@/lib/ai/features/smart-responses";
 import { executeFlowGraph, type FlowStepResult } from "@/lib/flow/flow-engine";
@@ -232,6 +238,31 @@ export async function processIncomingDirectMessage(
       }
       return res;
     });
+
+  const deliverMergedLeadCompletionMessage = async (params: {
+    successMessage?: string | null;
+    dmMessage?: string | null;
+    linkButtonLabel?: string | null;
+    trackedLinkUrl?: string | null;
+  }) => {
+    const mergedText = buildMergedLeadCompletionText({
+      successMessage: params.successMessage,
+      dmMessage: params.dmMessage,
+    });
+
+    if (params.trackedLinkUrl) {
+      await sendDirectMessageWithLinkButton(
+        accessToken,
+        instagramAccountId,
+        userId,
+        mergedText,
+        params.linkButtonLabel || "مشاهده و دریافت لینک",
+        params.trackedLinkUrl
+      );
+    } else {
+      await sendDirectMessage(accessToken, instagramAccountId, userId, mergedText);
+    }
+  };
 
   // ── 0. Update 24-Hour Messaging Window & Resume Paused Drips ────────────
   const conversationState = await prisma.conversationState.upsert({
@@ -467,23 +498,12 @@ export async function processIncomingDirectMessage(
               where: { id: conversationState.id },
               data: { step: "COMPLETED" },
             });
-            await sendDirectMessage(accessToken, instagramAccountId, userId, successMsg);
-
-            // Deliver the campaign's promised next message / reveal link / content
-            if (activeAutomation?.dmMessage && activeAutomation.dmMessage.trim() !== successMsg.trim()) {
-              if (activeAutomation.trackedLinks?.[0]) {
-                await sendDirectMessageWithLinkButton(
-                  accessToken,
-                  instagramAccountId,
-                  userId,
-                  activeAutomation.dmMessage,
-                  activeAutomation.linkButtonLabel || "مشاهده و دریافت لینک",
-                  activeAutomation.trackedLinks[0].destinationUrl
-                );
-              } else {
-                await sendDirectMessage(accessToken, instagramAccountId, userId, activeAutomation.dmMessage);
-              }
-            }
+            await deliverMergedLeadCompletionMessage({
+              successMessage: successMsg,
+              dmMessage: activeAutomation?.dmMessage,
+              linkButtonLabel: activeAutomation?.linkButtonLabel,
+              trackedLinkUrl: activeAutomation?.trackedLinks?.[0]?.destinationUrl,
+            });
             return;
           }
         } else if (pendingConf.type === "name" || pendingConf.type === "text") {
@@ -675,27 +695,12 @@ export async function processIncomingDirectMessage(
           const successMsg =
             activeAutomation.leadSuccessMessage ||
             "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏";
-          await sendDirectMessage(
-            accessToken,
-            instagramAccountId,
-            userId,
-            successMsg
-          );
-
-          if (activeAutomation.dmMessage && activeAutomation.dmMessage.trim() !== successMsg.trim()) {
-            if (activeAutomation.trackedLinks?.[0]) {
-              await sendDirectMessageWithLinkButton(
-                accessToken,
-                instagramAccountId,
-                userId,
-                activeAutomation.dmMessage,
-                activeAutomation.linkButtonLabel || "مشاهده و دریافت لینک",
-                activeAutomation.trackedLinks[0].destinationUrl
-              );
-            } else {
-              await sendDirectMessage(accessToken, instagramAccountId, userId, activeAutomation.dmMessage);
-            }
-          }
+          await deliverMergedLeadCompletionMessage({
+            successMessage: successMsg,
+            dmMessage: activeAutomation.dmMessage,
+            linkButtonLabel: activeAutomation.linkButtonLabel,
+            trackedLinkUrl: activeAutomation.trackedLinks?.[0]?.destinationUrl,
+          });
           return;
         }
       }
@@ -931,7 +936,7 @@ export async function processIncomingDirectMessage(
           );
           return;
         } else {
-          // End of flow: send success message and complete
+          // End of flow: send merged success + link message and complete
           const successMsg =
             config.successMessage ||
             activeAutomation.leadSuccessMessage ||
@@ -940,23 +945,12 @@ export async function processIncomingDirectMessage(
             where: { id: conversationState.id },
             data: { step: "COMPLETED" },
           });
-          await sendDirectMessage(accessToken, instagramAccountId, userId, successMsg);
-
-          // Deliver the campaign's promised next message / reveal link / content
-          if (activeAutomation.dmMessage && activeAutomation.dmMessage.trim() !== successMsg.trim()) {
-            if (activeAutomation.trackedLinks?.[0]) {
-              await sendDirectMessageWithLinkButton(
-                accessToken,
-                instagramAccountId,
-                userId,
-                activeAutomation.dmMessage,
-                activeAutomation.linkButtonLabel || "مشاهده و دریافت لینک",
-                activeAutomation.trackedLinks[0].destinationUrl
-              );
-            } else {
-              await sendDirectMessage(accessToken, instagramAccountId, userId, activeAutomation.dmMessage);
-            }
-          }
+          await deliverMergedLeadCompletionMessage({
+            successMessage: successMsg,
+            dmMessage: activeAutomation.dmMessage,
+            linkButtonLabel: activeAutomation.linkButtonLabel,
+            trackedLinkUrl: activeAutomation.trackedLinks?.[0]?.destinationUrl,
+          });
           return;
         }
       }
@@ -1020,28 +1014,12 @@ export async function processIncomingDirectMessage(
         where: { id: conversationState.id },
         data: { step: "COMPLETED" },
       });
-      await sendDirectMessage(
-        accessToken,
-        instagramAccountId,
-        userId,
-        successMsg
-      );
-
-      // Deliver the campaign's promised next message / reveal link / content
-      if (activeAutomation?.dmMessage && activeAutomation.dmMessage.trim() !== successMsg.trim()) {
-        if (activeAutomation.trackedLinks?.[0]) {
-          await sendDirectMessageWithLinkButton(
-            accessToken,
-            instagramAccountId,
-            userId,
-            activeAutomation.dmMessage,
-            activeAutomation.linkButtonLabel || "مشاهده و دریافت لینک",
-            activeAutomation.trackedLinks[0].destinationUrl
-          );
-        } else {
-          await sendDirectMessage(accessToken, instagramAccountId, userId, activeAutomation.dmMessage);
-        }
-      }
+      await deliverMergedLeadCompletionMessage({
+        successMessage: successMsg,
+        dmMessage: activeAutomation?.dmMessage,
+        linkButtonLabel: activeAutomation?.linkButtonLabel,
+        trackedLinkUrl: activeAutomation?.trackedLinks?.[0]?.destinationUrl,
+      });
       return;
     }
   } else if (phoneRes.isPartial && phoneRes.partialBuffer) {
@@ -1090,44 +1068,25 @@ export async function processIncomingDirectMessage(
       provider: (account.primaryProvider || "META") as any,
     });
 
-    if (leadResult.replyMessage) {
+    // Deliver the campaign's completion message + promised link/content merged into 1 bubble
+    if (leadResult.nextStep === "COMPLETED" && conversationState.automationId) {
+      const doneAutomation = await prisma.automation.findUnique({
+        where: { id: conversationState.automationId },
+        include: { trackedLinks: true },
+      });
+      await deliverMergedLeadCompletionMessage({
+        successMessage: leadResult.replyMessage,
+        dmMessage: doneAutomation?.dmMessage,
+        linkButtonLabel: doneAutomation?.linkButtonLabel,
+        trackedLinkUrl: doneAutomation?.trackedLinks?.[0]?.destinationUrl,
+      });
+    } else if (leadResult.replyMessage) {
       await sendDirectMessage(
         accessToken,
         instagramAccountId,
         userId,
         leadResult.replyMessage
       );
-    }
-
-    // Deliver the campaign's promised "And then, they will get" message when the form completes
-    if (leadResult.nextStep === "COMPLETED" && conversationState.automationId) {
-      const doneAutomation = await prisma.automation.findUnique({
-        where: { id: conversationState.automationId },
-        include: { trackedLinks: true },
-      });
-      if (
-        doneAutomation?.dmMessage &&
-        doneAutomation.dmMessage.trim() &&
-        doneAutomation.dmMessage.trim() !== (leadResult.replyMessage || "").trim()
-      ) {
-        if (doneAutomation.trackedLinks?.[0]) {
-          await sendDirectMessageWithLinkButton(
-            accessToken,
-            instagramAccountId,
-            userId,
-            doneAutomation.dmMessage,
-            doneAutomation.linkButtonLabel || "مشاهده و دریافت لینک",
-            doneAutomation.trackedLinks[0].destinationUrl
-          );
-        } else {
-          await sendDirectMessage(
-            accessToken,
-            instagramAccountId,
-            userId,
-            doneAutomation.dmMessage
-          );
-        }
-      }
     }
     return;
   }
@@ -1756,12 +1715,12 @@ export async function processIncomingDirectMessage(
             automationId: automation.id,
           });
 
-          await sendDirectMessage(
-            accessToken,
-            instagramAccountId,
-            userId,
-            automation.leadSuccessMessage || "عالیه! اطلاعاتتون با موفقیت ثبت شد 🙏"
-          );
+          await deliverMergedLeadCompletionMessage({
+            successMessage: automation.leadSuccessMessage || "عالیه! اطلاعاتتون با موفقیت ثبت شد 🙏",
+            dmMessage: automation.dmMessage,
+            linkButtonLabel: automation.linkButtonLabel,
+            trackedLinkUrl: automation.trackedLinks?.[0]?.destinationUrl,
+          });
           return;
         }
 

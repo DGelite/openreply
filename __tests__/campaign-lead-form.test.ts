@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { phpBookingClient } from "@/lib/services/php-booking-client";
 import { syncLeadToWampCrm } from "@/lib/automation/crm-sync";
 import { deliverPrivateReply } from "@/lib/queue/handlers/dm-delivery";
-import { processLeadStep } from "@/lib/automation/email-phone-collector";
+import { processLeadStep, buildMergedLeadCompletionText } from "@/lib/automation/email-phone-collector";
 import { providerManager } from "@/lib/providers/manager/provider-manager";
 import { prisma } from "@/lib/db/client";
 import {
@@ -483,5 +483,23 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
         phone: "09133702778",
       })
     );
+  });
+
+  it("merges leadSuccessMessage and campaign dmMessage cleanly into 1 message bubble", () => {
+    const merged = buildMergedLeadCompletionText({
+      successMessage: "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏",
+      dmMessage: "سلام! لینک درخواست‌شده برای شما ارسال شد 🙏",
+    });
+
+    expect(merged).toBe(
+      "عالیه! شماره‌تون با موفقیت ثبت شد، خیلی زود باهاتون تماس می‌گیریم 🙏\n\nسلام! لینک درخواست‌شده برای شما ارسال شد 🙏"
+    );
+
+    // Avoid duplicating identical texts
+    const deduped = buildMergedLeadCompletionText({
+      successMessage: "لینک آماده شد",
+      dmMessage: "لینک آماده شد",
+    });
+    expect(deduped).toBe("لینک آماده شد");
   });
 });
