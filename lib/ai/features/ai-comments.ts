@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { getAiEngine } from "../factory";
+import { buildBackupCommentReply } from "../backup-engine";
 import { evaluatePromptSafety } from "../security/guardrails";
 import { isAiActive } from "../utils";
 
@@ -53,10 +54,11 @@ export async function processAiComment(
     };
   }
 
-  // 3. Resolve AI Engine
-  const aiEngine = await getAiEngine(workspaceId);
+  try {
+    // 3. Resolve AI Engine
+    const aiEngine = await getAiEngine(workspaceId);
 
-  const systemPrompt = `شما مسئول پاسخگویی خودکار به کامنت‌های پست‌های اینستاگرام هستید.
+    const systemPrompt = `شما مسئول پاسخگویی خودکار به کامنت‌های پست‌های اینستاگرام هستید.
 وظایف:
 ۱. تحلیل متن کامنت از نظر اسپم، فحاشی یا بی‌ربط بودن.
 ۲. ساخت پاسخ کامپکت، کوتاه (حداکثر ۱۰ الی ۱۵ کلمه) و صمیمی همراه با ایموجی.
@@ -69,53 +71,63 @@ export async function processAiComment(
   "confidenceScore": 0.95
 }`;
 
-  const completion = await aiEngine.generateCompletion({
-    systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: `کامنت کاربر ${commenterUsername || ""}: "${commentText}"`,
-      },
-    ],
-    jsonMode: true,
-  });
+    const completion = await aiEngine.generateCompletion({
+      systemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: `کامنت کاربر ${commenterUsername || ""}: "${commentText}"`,
+        },
+      ],
+      jsonMode: true,
+    });
 
-  let parsed = {
-    replyText: "مرسی بابت کامنت قشنگتون! ❤️",
-    isSpam: false,
-    confidenceScore: 0.9,
-  };
+    let parsed = buildBackupCommentReply(commentText, manualApprovalMode);
 
-  try {
-    parsed = JSON.parse(completion.text);
-  } catch {
-    // fallback if JSON parse fails
+    try {
+      const aiParsed = JSON.parse(completion.text);
+      parsed = {
+        replyText: aiParsed.replyText || parsed.replyText,
+        isSpam: Boolean(aiParsed.isSpam),
+        confidenceScore: typeof aiParsed.confidenceScore === "number" ? aiParsed.confidenceScore : 0.9,
+        requiresManualApproval: false,
+        shouldSkip: Boolean(aiParsed.isSpam),
+      };
+    } catch {
+      // keep backup parsed reply if JSON parse fails
+    }
+
+    const requiresApproval =
+      manualApprovalMode || parsed.confidenceScore < confidenceThreshold;
+
+    // Fire-and-forget audit log — never block the main response path
+    prisma.aiAuditLog
+      .create({
+        data: {
+          workspaceId,
+          feature: "COMMENTS",
+          provider: completion.provider,
+          model: completion.model,
+          promptTokens: completion.promptTokens,
+          completionTokens: completion.completionTokens,
+          latencyMs: completion.latencyMs,
+          confidenceScore: parsed.confidenceScore,
+        },
+      })
+      .catch((err) => console.error("[AI Comments] Audit log failed:", err));
+
+    return {
+      replyText: parsed.replyText,
+      isSpam: parsed.isSpam,
+      confidenceScore: parsed.confidenceScore,
+      requiresManualApproval: requiresApproval,
+      shouldSkip: parsed.isSpam,
+    };
+  } catch (err) {
+    console.warn(
+      `[AI Comments] AI unavailable for comment ${commentId}, using backup engine:`,
+      err instanceof Error ? err.message : err
+    );
+    return buildBackupCommentReply(commentText, manualApprovalMode);
   }
-
-  const requiresApproval =
-    manualApprovalMode || parsed.confidenceScore < confidenceThreshold;
-
-  // Fire-and-forget audit log — never block the main response path
-  prisma.aiAuditLog
-    .create({
-      data: {
-        workspaceId,
-        feature: "COMMENTS",
-        provider: completion.provider,
-        model: completion.model,
-        promptTokens: completion.promptTokens,
-        completionTokens: completion.completionTokens,
-        latencyMs: completion.latencyMs,
-        confidenceScore: parsed.confidenceScore,
-      },
-    })
-    .catch((err) => console.error("[AI Comments] Audit log failed:", err));
-
-  return {
-    replyText: parsed.replyText,
-    isSpam: parsed.isSpam,
-    confidenceScore: parsed.confidenceScore,
-    requiresManualApproval: requiresApproval,
-    shouldSkip: parsed.isSpam,
-  };
 }

@@ -74,11 +74,28 @@ export async function processLeadStep(params: {
       };
     }
 
-    // AI Silent Normalizer with Fast-Path (0 tokens if clean, resilient to full sentences)
+    const [automation, currentConvState] = await Promise.all([
+      automationId ? prisma.automation.findUnique({ where: { id: automationId } }) : null,
+      prisma.conversationState.findUnique({
+        where: { instagramAccountId_userId: { instagramAccountId, userId } },
+        select: { metadata: true },
+      }),
+    ]);
+
+    const convMeta =
+      currentConvState?.metadata && typeof currentConvState.metadata === "object"
+        ? (currentConvState.metadata as Record<string, unknown>)
+        : {};
+    const isSingleStep = Boolean(
+      convMeta.singleStepLead === true ||
+        (automation?.collectName && automation?.collectPhone && automation?.singleStepLeadCapture)
+    );
+
+    // AI Silent Normalizer with Fast-Path + Deterministic Backup Engine
     const norm = await normalizeLeadData({
       workspaceId,
       userMessage: trimmedMessage,
-      expectedField: "name",
+      expectedField: isSingleStep || automation?.collectPhone ? "both" : "name",
       mode: "SILENT_NORMALIZE_ONLY",
     });
 
@@ -89,15 +106,6 @@ export async function processLeadStep(params: {
     // NEVER save numbers (e.g. "122"), greetings, or invalid text as a person's name!
     if (!name) {
       if (phoneFromNorm) {
-        const existingConv = await prisma.conversationState.findUnique({
-          where: { instagramAccountId_userId: { instagramAccountId, userId } },
-          select: { metadata: true },
-        });
-        const prevMeta =
-          existingConv?.metadata && typeof existingConv.metadata === "object"
-            ? (existingConv.metadata as Record<string, unknown>)
-            : {};
-
         await prisma.conversationState.upsert({
           where: { instagramAccountId_userId: { instagramAccountId, userId } },
           create: {
@@ -106,12 +114,12 @@ export async function processLeadStep(params: {
             userId,
             step: "AWAITING_NAME",
             automationId,
-            metadata: { ...prevMeta, phoneCapturedInCurrentForm: true },
+            metadata: { ...convMeta, phoneCapturedInCurrentForm: true },
           },
           update: {
             step: "AWAITING_NAME",
             automationId,
-            metadata: { ...prevMeta, phoneCapturedInCurrentForm: true },
+            metadata: { ...convMeta, phoneCapturedInCurrentForm: true },
           },
         });
 
@@ -145,14 +153,19 @@ export async function processLeadStep(params: {
           handled: true,
           success: false,
           nextStep: "AWAITING_NAME",
-          replyMessage: "مرسی، شماره‌تون رو نگه داشتم 👍 لطفاً اسم و فامیلتون رو هم برام بنویسید تا تکمیل بشه 🙏",
+          replyMessage:
+            automation?.leadPromptName ||
+            "مرسی، شماره‌تون رو نگه داشتم 👍 لطفاً اسم و فامیلتون رو هم برام بنویسید تا تکمیل بشه 🙏",
           capturedData: { phone: phoneFromNorm },
         };
       }
 
-      const askAgainMsg = norm.replyMessageToUser
-        ? `${norm.replyMessageToUser}\n\nلطفاً اسم و فامیل واقعیتون رو برام بنویسید تا بتونم ثبتش کنم 🙏`
+      const fallbackAsk = isSingleStep
+        ? "لطفاً اسم و فامیل به همراه شماره موبایل واقعیتون رو برام بنویسید تا بتونم ثبتش کنم 🙏"
         : "لطفاً اسم و فامیل واقعیتون رو برام بنویسید تا بتونم ثبتش کنم 🙏";
+      const askAgainMsg = norm.replyMessageToUser
+        ? `${norm.replyMessageToUser}\n\n${fallbackAsk}`
+        : fallbackAsk;
 
       return {
         handled: true,
@@ -173,6 +186,7 @@ export async function processLeadStep(params: {
         username,
         name,
         phone: phoneFromNorm || undefined,
+        phoneVerified: phoneFromNorm ? true : undefined,
         phoneNotes: notesFromNorm || undefined,
         sourceAutomationId: automationId,
         provider,
@@ -183,6 +197,7 @@ export async function processLeadStep(params: {
         name,
         username: username ?? undefined,
         phone: phoneFromNorm || undefined,
+        phoneVerified: phoneFromNorm ? true : undefined,
         phoneNotes: notesFromNorm || undefined,
         sourceAutomationId: automationId ?? undefined,
         provider,
@@ -190,18 +205,6 @@ export async function processLeadStep(params: {
       },
     });
 
-    const [automation, currentConvState] = await Promise.all([
-      automationId ? prisma.automation.findUnique({ where: { id: automationId } }) : null,
-      prisma.conversationState.findUnique({
-        where: { instagramAccountId_userId: { instagramAccountId, userId } },
-        select: { metadata: true },
-      }),
-    ]);
-
-    const convMeta =
-      currentConvState?.metadata && typeof currentConvState.metadata === "object"
-        ? (currentConvState.metadata as Record<string, unknown>)
-        : {};
     // Only skip asking phone if phone was captured INSIDE THIS CURRENT FORM (same message or phone-first step)
     const phoneCapturedThisRun = Boolean(
       phoneFromNorm || (convMeta.phoneCapturedInCurrentForm === true && savedLead.phone)
@@ -217,10 +220,12 @@ export async function processLeadStep(params: {
           userId,
           step: "AWAITING_PHONE",
           automationId,
+          metadata: { ...convMeta, nameCapturedInCurrentForm: true },
         },
         update: {
           step: "AWAITING_PHONE",
           automationId,
+          metadata: { ...convMeta, nameCapturedInCurrentForm: true },
         },
       });
 
@@ -240,7 +245,9 @@ export async function processLeadStep(params: {
       };
     }
 
-    // Name-only collection complete!
+    const finalPhoneForCrm = phoneFromNorm || (convMeta.phoneCapturedInCurrentForm ? savedLead.phone : undefined) || undefined;
+
+    // Name-only or Single-Step (name + phone together) collection complete!
     await prisma.conversationState.upsert({
       where: {
         instagramAccountId_userId: { instagramAccountId, userId },
@@ -260,7 +267,7 @@ export async function processLeadStep(params: {
     void syncLeadToWampCrm({
       leadId: `lead_${instagramAccountId}_${userId}`,
       full_name: name,
-      phone: savedLead.phone || phoneFromNorm || undefined,
+      phone: finalPhoneForCrm,
       username,
       igsid: userId,
       instagramAccountId,
@@ -268,6 +275,7 @@ export async function processLeadStep(params: {
       externalUserId,
       lead_source: `campaign:${automation?.name || automationId}`,
       auto_verify_and_book: Boolean(automation?.autoVerifyAndBook),
+      custom_data: notesFromNorm ? { lead_notes: notesFromNorm } : undefined,
     });
 
     return {
@@ -277,7 +285,7 @@ export async function processLeadStep(params: {
       replyMessage:
         automation?.leadSuccessMessage ||
         `عالیه ${name} جان! اطلاعاتتون با موفقیت ثبت شد 🙏`,
-      capturedData: { name },
+      capturedData: { name, ...(finalPhoneForCrm ? { phone: finalPhoneForCrm } : {}) },
     };
   }
 

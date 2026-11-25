@@ -24,6 +24,8 @@ export interface LoadedCampaign {
   leadPromptName?: string | null;
   collectPhone?: boolean;
   leadPromptPhone?: string | null;
+  singleStepLeadCapture?: boolean;
+  leadPromptBoth?: string | null;
   leadSuccessMessage?: string | null;
   collectPhoneSkipOtp?: boolean;
   autoVerifyAndBook?: boolean;

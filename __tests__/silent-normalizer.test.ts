@@ -298,5 +298,84 @@ describe("Modular AI Silent Normalizer & Fast-Path Engine", () => {
       expect(res.fullName).toBe("علی رضایی");
       expect(res.notes).toBe("فقط عصرها تماس بگیرید");
     });
+
+    it("NEVER lets AI alter phone digits or hallucinate a phone number", async () => {
+      const { prisma } = await import("@/lib/db/client");
+      const { getAiEngine } = await import("@/lib/ai/factory");
+
+      (prisma.aiConfig.findUnique as any).mockResolvedValue({
+        isEnabled: false,
+        safetySettings: { leadNormalizer: { enabled: true } },
+      });
+
+      // Scenario A: AI attempts to corrupt a digit (returns 09120000000 instead of 09133702778)
+      (getAiEngine as any).mockResolvedValue({
+        generateCompletion: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            firstName: "آرمین",
+            lastName: "طهماسبی",
+            phone: "09120000000",
+            notes: null,
+            questionAnswer: null,
+          }),
+        }),
+      });
+
+      const resWithRealPhone = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "آرمین طهماسبی 09133702778",
+        expectedField: "both",
+      });
+      expect(resWithRealPhone.phone).toBe("09133702778");
+      expect(resWithRealPhone.fullName).toBe("آرمین طهماسبی");
+
+      // Scenario B: User message has NO phone, AI hallucinates a fake mobile number
+      (getAiEngine as any).mockResolvedValue({
+        generateCompletion: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            firstName: "آرمین",
+            lastName: "طهماسبی",
+            phone: "09123456789",
+            notes: null,
+            questionAnswer: null,
+          }),
+        }),
+      });
+
+      const resWithoutPhone = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "سلام من آرمین طهماسبی هستم",
+        expectedField: "both",
+      });
+      expect(resWithoutPhone.phone).toBeNull();
+      expect(resWithoutPhone.fullName).toBe("آرمین طهماسبی");
+    });
+
+    it("backup heuristic engine cleanly extracts both name and phone-first sentences when AI is offline (HTTP 503)", async () => {
+      const { prisma } = await import("@/lib/db/client");
+      const { getAiEngine } = await import("@/lib/ai/factory");
+
+      (prisma.aiConfig.findUnique as any).mockResolvedValue({
+        isEnabled: false,
+        safetySettings: { leadNormalizer: { enabled: true } },
+      });
+      (getAiEngine as any).mockRejectedValue(new Error("Gemini API Error 503: high demand"));
+
+      const phoneFirst = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "۰۹۱۳ ۳۷۰ ۲۷۷۸ سلام من سارا احمدی هستم ممنون از شما",
+        expectedField: "both",
+      });
+      expect(phoneFirst.phone).toBe("09133702778");
+      expect(phoneFirst.fullName).toBe("سارا احمدی");
+
+      const fillerOnly = await normalizeLeadData({
+        workspaceId: "ws_123",
+        userMessage: "این شماره من هستش 09133702778",
+        expectedField: "both",
+      });
+      expect(fillerOnly.phone).toBe("09133702778");
+      expect(fillerOnly.fullName).toBeNull();
+    });
   });
 });

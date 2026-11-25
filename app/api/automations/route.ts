@@ -50,6 +50,8 @@ const createAutomationSchema = z
     leadPromptName: z.string().max(1000).optional().nullable(),
     collectPhone: z.boolean().optional().default(false),
     leadPromptPhone: z.string().max(1000).optional().nullable(),
+    singleStepLeadCapture: z.boolean().optional().default(false),
+    leadPromptBoth: z.string().max(1000).optional().nullable(),
     leadSuccessMessage: z.string().max(1000).optional().nullable(),
     collectPhoneSkipOtp: z.boolean().optional().default(false),
     autoVerifyAndBook: z.boolean().optional().default(false),
@@ -111,6 +113,8 @@ const updateAutomationSchema = z.object({
   leadPromptName: z.string().max(1000).optional().nullable(),
   collectPhone: z.boolean().optional(),
   leadPromptPhone: z.string().max(1000).optional().nullable(),
+  singleStepLeadCapture: z.boolean().optional(),
+  leadPromptBoth: z.string().max(1000).optional().nullable(),
   leadSuccessMessage: z.string().max(1000).optional().nullable(),
   collectPhoneSkipOtp: z.boolean().optional(),
   autoVerifyAndBook: z.boolean().optional(),
@@ -416,6 +420,10 @@ export async function POST(request: NextRequest) {
       leadPromptName: parsed.data.leadPromptName || null,
       collectPhone: parsed.data.collectPhone,
       leadPromptPhone: parsed.data.leadPromptPhone || null,
+      singleStepLeadCapture: Boolean(
+        parsed.data.collectName && parsed.data.collectPhone && parsed.data.singleStepLeadCapture
+      ),
+      leadPromptBoth: parsed.data.leadPromptBoth || null,
       leadSuccessMessage: parsed.data.leadSuccessMessage || null,
       collectPhoneSkipOtp: parsed.data.collectPhoneSkipOtp,
       autoVerifyAndBook: parsed.data.autoVerifyAndBook,

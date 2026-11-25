@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { getAiEngine } from "../factory";
+import { buildBackupSmartResponse } from "../backup-engine";
 import { evaluatePromptSafety, sanitizeAiOutput } from "../security/guardrails";
 import { isAiActive } from "../utils";
 import type { AiConfig } from "@/lib/generated/prisma/client";
@@ -68,68 +69,87 @@ export async function generateAiReply(
     };
   }
 
-  // 4. Resolve AI Engine Provider (uses same config internally, avoiding a 3rd DB call)
-  const aiEngine = await getAiEngine(workspaceId);
+  try {
+    // 4. Resolve AI Engine Provider (uses same config internally, avoiding a 3rd DB call)
+    const aiEngine = await getAiEngine(workspaceId);
 
-  const memoryContext = memories.map((m) => `${m.memoryKey}: ${m.memoryValue}`).join("\n");
+    const memoryContext = memories.map((m) => `${m.memoryKey}: ${m.memoryValue}`).join("\n");
 
-  const lengthGuide =
-    maxLength === "short"
-      ? "پاسخ را بسیار کوتاه و حداکثر در ۱ تا ۲ جمله بنویس."
-      : maxLength === "long"
-      ? "پاسخ را کامل، توضیحی و مفصل بنویس."
-      : "پاسخ را در ۲ تا ۳ جمله متناسب بنویس.";
+    const lengthGuide =
+      maxLength === "short"
+        ? "پاسخ را بسیار کوتاه و حداکثر در ۱ تا ۲ جمله بنویس."
+        : maxLength === "long"
+        ? "پاسخ را کامل، توضیحی و مفصل بنویس."
+        : "پاسخ را در ۲ تا ۳ جمله متناسب بنویس.";
 
-  // Use workspace's custom system prompt if configured, else fall back to default persona
-  const effectiveBrandVoice = brandVoice || config?.brandVoice || "صمیمی، محترمانه و حرفه‌ای";
-  const effectiveTone = tone || config?.defaultTone || "friendly";
+    // Use workspace's custom system prompt if configured, else fall back to default persona
+    const effectiveBrandVoice = brandVoice || config?.brandVoice || "صمیمی، محترمانه و حرفه‌ای";
+    const effectiveTone = tone || config?.defaultTone || "friendly";
 
-  const promptParts = [
-    "شما دستیار هوشمند و حرفه‌ای اینستاگرام هستید.",
-    `لحن پاسخ: ${effectiveTone}.`,
-    `لحن برند: ${effectiveBrandVoice}.`,
-    lengthGuide,
-  ];
-  if (memoryContext) {
-    promptParts.push(`اطلاعات قبلی مخاطب:\n${memoryContext}`);
+    const promptParts = [
+      "شما دستیار هوشمند و حرفه‌ای اینستاگرام هستید.",
+      `لحن پاسخ: ${effectiveTone}.`,
+      `لحن برند: ${effectiveBrandVoice}.`,
+      lengthGuide,
+    ];
+    if (memoryContext) {
+      promptParts.push(`اطلاعات قبلی مخاطب:\n${memoryContext}`);
+    }
+    promptParts.push("پاسخ را کاملاً طبیعی، بدون لحن رباتیک و متناسب با نیاز کاربر ارسال کن.");
+
+    const systemPrompt = config?.systemPrompt?.trim()
+      ? config.systemPrompt
+      : promptParts.join("\n");
+
+    const completion = await aiEngine.generateCompletion({
+      systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+      temperature: config?.temperature ?? 0.7,
+      maxTokens: config?.maxTokens ?? 250,
+    });
+
+    const cleanText = sanitizeAiOutput(completion.text);
+
+    // 5. Log Audit Event (fire-and-forget, non-blocking)
+    prisma.aiAuditLog
+      .create({
+        data: {
+          workspaceId,
+          feature: "REPLIES",
+          provider: completion.provider,
+          model: completion.model,
+          promptTokens: completion.promptTokens,
+          completionTokens: completion.completionTokens,
+          latencyMs: completion.latencyMs,
+          confidenceScore: 0.92,
+        },
+      })
+      .catch((err) => console.error("[AI Replies] Audit log failed:", err));
+
+    return {
+      replyText: cleanText,
+      confidenceScore: 0.92,
+      provider: completion.provider,
+      model: completion.model,
+      isSafe: true,
+      tokensUsed: completion.promptTokens + completion.completionTokens,
+    };
+  } catch (err) {
+    console.warn(
+      "[AI Replies] AI unavailable, switching to deterministic backup engine:",
+      err instanceof Error ? err.message : err
+    );
+    const backupText = buildBackupSmartResponse({
+      userMessage,
+      offlineMessage: config?.offlineMessage,
+    });
+    return {
+      replyText: sanitizeAiOutput(backupText),
+      confidenceScore: 0.75,
+      provider: "BACKUP_ENGINE",
+      model: "HEURISTIC_V1",
+      isSafe: true,
+      tokensUsed: 0,
+    };
   }
-  promptParts.push("پاسخ را کاملاً طبیعی، بدون لحن رباتیک و متناسب با نیاز کاربر ارسال کن.");
-
-  const systemPrompt = config?.systemPrompt?.trim()
-    ? config.systemPrompt
-    : promptParts.join("\n");
-
-  const completion = await aiEngine.generateCompletion({
-    systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-    temperature: config?.temperature ?? 0.7,
-    maxTokens: config?.maxTokens ?? 250,
-  });
-
-  const cleanText = sanitizeAiOutput(completion.text);
-
-  // 5. Log Audit Event (fire-and-forget, non-blocking)
-  prisma.aiAuditLog
-    .create({
-      data: {
-        workspaceId,
-        feature: "REPLIES",
-        provider: completion.provider,
-        model: completion.model,
-        promptTokens: completion.promptTokens,
-        completionTokens: completion.completionTokens,
-        latencyMs: completion.latencyMs,
-        confidenceScore: 0.92,
-      },
-    })
-    .catch((err) => console.error("[AI Replies] Audit log failed:", err));
-
-  return {
-    replyText: cleanText,
-    confidenceScore: 0.92,
-    provider: completion.provider,
-    model: completion.model,
-    isSafe: true,
-    tokensUsed: completion.promptTokens + completion.completionTokens,
-  };
 }

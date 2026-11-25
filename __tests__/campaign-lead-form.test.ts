@@ -206,6 +206,15 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
   it("refuses to save numeric keyword '122' as lead name during AWAITING_NAME step", async () => {
     const leadUpsertSpy = vi.spyOn(prisma.lead, "upsert").mockResolvedValue({} as any);
     const convUpsertSpy = vi.spyOn(prisma.conversationState, "upsert").mockResolvedValue({} as any);
+    vi.spyOn(prisma.automation, "findUnique").mockResolvedValue({
+      id: "auto_122",
+      collectName: true,
+      collectPhone: true,
+      singleStepLeadCapture: false,
+    } as any);
+    vi.spyOn(prisma.conversationState, "findUnique").mockResolvedValue({
+      metadata: {},
+    } as any);
     vi.spyOn(prisma.aiConfig, "findUnique").mockResolvedValue({
       isEnabled: false,
       safetySettings: { leadNormalizer: { enabled: false } },
@@ -310,5 +319,169 @@ describe("Campaign Lead Capture Form & Instant Booking Bridge", () => {
     expect(res.success).toBe(true);
     expect(res.nextStep).toBe("AWAITING_PHONE");
     expect(res.replyMessage).toBe("لطفاً شماره‌تون رو بفرستید 📱");
+  });
+
+  it("sends leadPromptBoth in single-step mode when both collectName and collectPhone and singleStepLeadCapture are enabled", async () => {
+    const privateReplySpy = vi.spyOn(providerManager, "privateReply").mockResolvedValue({
+      success: true,
+      provider: "BOXAPI",
+      messageId: "msg_pr_both",
+      recipientId: "user_both",
+      status: "SENT",
+      timestamp: new Date(),
+    });
+    vi.spyOn(prisma.dmLog, "update").mockResolvedValue({} as any);
+    const convUpsertSpy = vi.spyOn(prisma.conversationState, "upsert").mockResolvedValue({} as any);
+
+    await deliverPrivateReply({
+      automation: {
+        id: "auto_single_step",
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_row_1",
+        dmMessage: "لینک آماده شد",
+        openingDmEnabled: false,
+        collectName: true,
+        collectPhone: true,
+        singleStepLeadCapture: true,
+        leadPromptBoth: "سلام! اسم و شماره موبایلت رو توی یه پیام بفرست 🙏",
+        leadPromptName: "اسم چیه؟",
+        leadPromptPhone: "شماره چنده؟",
+        trackedLinks: [],
+        instagramAccount: {
+          id: "ig_row_1",
+          instagramId: "17841401025517140",
+        },
+      } as any,
+      accessToken: "",
+      commentId: "cmt_single",
+      commenterId: "user_both",
+      commenterName: "armin.test",
+      commentText: "122",
+    });
+
+    expect(privateReplySpy).toHaveBeenCalledWith(
+      "ig_row_1",
+      "cmt_single",
+      "سلام! اسم و شماره موبایلت رو توی یه پیام بفرست 🙏"
+    );
+    expect(convUpsertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          step: "AWAITING_NAME",
+          metadata: { singleStepLead: true },
+        }),
+        update: expect.objectContaining({
+          step: "AWAITING_NAME",
+          metadata: { singleStepLead: true },
+        }),
+      })
+    );
+  });
+
+  it("still asks ONLY phone when collectName is unchecked even if singleStepLeadCapture is true", async () => {
+    const privateReplySpy = vi.spyOn(providerManager, "privateReply").mockResolvedValue({
+      success: true,
+      provider: "BOXAPI",
+      messageId: "msg_pr_phone_only",
+      recipientId: "user_phone_only",
+      status: "SENT",
+      timestamp: new Date(),
+    });
+    vi.spyOn(prisma.dmLog, "update").mockResolvedValue({} as any);
+    const convUpsertSpy = vi.spyOn(prisma.conversationState, "upsert").mockResolvedValue({} as any);
+
+    await deliverPrivateReply({
+      automation: {
+        id: "auto_phone_only",
+        workspaceId: "ws_1",
+        instagramAccountId: "ig_row_1",
+        dmMessage: "لینک",
+        openingDmEnabled: false,
+        collectName: false,
+        collectPhone: true,
+        singleStepLeadCapture: true,
+        leadPromptPhone: "فقط شماره‌تون رو بفرستید 📱",
+        leadPromptBoth: "اسم و شماره بفرستید",
+        trackedLinks: [],
+        instagramAccount: {
+          id: "ig_row_1",
+          instagramId: "17841401025517140",
+        },
+      } as any,
+      accessToken: "",
+      commentId: "cmt_phone_only",
+      commenterId: "user_phone_only",
+      commenterName: "phone_tester",
+      commentText: "122",
+    });
+
+    expect(privateReplySpy).toHaveBeenCalledWith(
+      "ig_row_1",
+      "cmt_phone_only",
+      "فقط شماره‌تون رو بفرستید 📱"
+    );
+    expect(convUpsertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ step: "AWAITING_PHONE", metadata: {} }),
+        update: expect.objectContaining({ step: "AWAITING_PHONE", metadata: {} }),
+      })
+    );
+  });
+
+  it("completes single-step form in 1 message when user sends both name and phone together", async () => {
+    vi.spyOn(prisma.aiConfig, "findUnique").mockResolvedValue({
+      isEnabled: false,
+      safetySettings: { leadNormalizer: { enabled: false } },
+    } as any);
+    vi.spyOn(prisma.automation, "findUnique").mockResolvedValue({
+      id: "auto_single",
+      name: "تست تک‌مرحله‌ای",
+      collectName: true,
+      collectPhone: true,
+      singleStepLeadCapture: true,
+      leadSuccessMessage: "ثبت نهایی انجام شد 🙏",
+    } as any);
+    vi.spyOn(prisma.conversationState, "findUnique").mockResolvedValue({
+      metadata: { singleStepLead: true },
+    } as any);
+    const leadUpsertSpy = vi.spyOn(prisma.lead, "upsert").mockResolvedValue({
+      id: "lead_1",
+      name: "آرمین طهماسبی",
+      phone: "09133702778",
+      phoneVerified: true,
+    } as any);
+    vi.spyOn(prisma.conversationState, "upsert").mockResolvedValue({} as any);
+    const syncSpy = vi.spyOn(phpBookingClient, "syncLead").mockResolvedValue({
+      success: true,
+      crm_lead_id: 901,
+    } as any);
+
+    const res = await processLeadStep({
+      workspaceId: "ws_1",
+      instagramAccountId: "ig_1",
+      userId: "user_1",
+      userMessage: "آرمین طهماسبی 09133702778",
+      currentStep: "AWAITING_NAME",
+      automationId: "auto_single",
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.nextStep).toBe("COMPLETED");
+    expect(res.replyMessage).toBe("ثبت نهایی انجام شد 🙏");
+    expect(leadUpsertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          name: "آرمین طهماسبی",
+          phone: "09133702778",
+          phoneVerified: true,
+        }),
+      })
+    );
+    expect(syncSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        full_name: "آرمین طهماسبی",
+        phone: "09133702778",
+      })
+    );
   });
 });

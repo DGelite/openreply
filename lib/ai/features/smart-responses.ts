@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { getAiEngine } from "../factory";
+import { buildBackupSmartResponse } from "../backup-engine";
 import { queryKnowledgeBase } from "./knowledge-base";
 import { buildBusinessPersonaPrompt } from "./persona-engine";
 import { evaluateConversationStrategy } from "./conversation-strategy";
@@ -118,19 +119,33 @@ export async function generateSmartResponse(
 
   const systemPrompt = promptSections.join("\n\n");
 
-  const aiEngine = await getAiEngine(workspaceId);
+  try {
+    const aiEngine = await getAiEngine(workspaceId);
 
-  const completion = await aiEngine.generateCompletion({
-    systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-    maxTokens: 250,
-  });
+    const completion = await aiEngine.generateCompletion({
+      systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+      maxTokens: 250,
+    });
 
-  let replyText = completion.text.trim();
+    let replyText = completion.text.trim();
 
-  // Defense-in-depth: Remove any accidental military slop words
-  const forbiddenRegex = /(فرمانده|امپراتوری|سرباز|مهمات|اتاق جنگ|ضدگلوله|داور بی‌رحم|قرارداد مرگ و زندگی|الکس هرموزی|راسل برانسون)/gi;
-  replyText = replyText.replace(forbiddenRegex, "").trim();
+    // Defense-in-depth: Remove any accidental military slop words
+    const forbiddenRegex = /(فرمانده|امپراتوری|سرباز|مهمات|اتاق جنگ|ضدگلوله|داور بی‌رحم|قرارداد مرگ و زندگی|الکس هرموزی|راسل برانسون)/gi;
+    replyText = replyText.replace(forbiddenRegex, "").trim();
 
-  return replyText;
+    return replyText;
+  } catch (err) {
+    console.warn(
+      "[SmartResponses] AI unavailable, switching to deterministic backup engine:",
+      err instanceof Error ? err.message : err
+    );
+    return buildBackupSmartResponse({
+      userMessage,
+      customerName: lead?.name || lead?.username,
+      hasPhone,
+      kbSnippets: ragDocs.map((d) => d.content),
+      offlineMessage: aiConfig?.offlineMessage,
+    });
+  }
 }

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/client";
 import { getAiEngine } from "./factory";
-import { extractPhoneNumber } from "./phone-extractor";
+import { extractPhoneNumber, normalizeNumerals } from "./phone-extractor";
+import { isPhoneGroundedInInput } from "./backup-engine";
 
 export interface NormalizeLeadOptions {
   workspaceId: string;
@@ -94,7 +95,7 @@ const DEFAULT_NORMALIZER_PROMPT = `تو یک نرمال‌ساز داده‌ها
 1. نام و نام خانوادگی را از تعارفات و مقدمه‌ها (سلام، درود، من هستم، اسمم، و...) جدا کن.
 2. فامیلی‌های چندکلمه‌ای (مثل طهماسبی فرد، حسینی نژاد) را به عنوان نام خانوادگی در نظر بگیر.
 3. اگر پیام فقط عدد یا کد کمپین (مثل 122)، ایموجی، سلام و احوالپرسی بدون نام، سوال یا فقط شماره تماس بود و نام فردی در آن نبود، حتماً firstName و lastName را null برگردان. هرگز عدد یا کد را جای نام نگذار!
-4. شماره موبایل را به فرمت استاندارد 09xxxxxxxxx تبدیل کن (تبدیل اعداد فارسی به انگلیسی).
+4. شماره موبایل را فقط و فقط با کپی دقیق ارقام موجود در پیام کاربر به فرمت استاندارد 09xxxxxxxxx تبدیل کن (تبدیل اعداد فارسی به انگلیسی). هرگز هیچ رقمی را تغییر نده، حدس نزن یا شماره جدید نساز.
 5. هر توضیح اضافه، سوال درباره خدمات/قیمت، ساعت تماس مناسب، یا نیازهای خاص مشتری را در فیلد notes بنویس.
 6. اگر mode برابر "ASSISTANT_CO_PILOT" بود و کاربر سوالی پرسیده بود، یک پاسخ بسیار کوتاه، محترمانه و دقیق (حداکثر ۱ جمله) در فیلد questionAnswer بده. در غیر این صورت questionAnswer باید null باشد.
 7. خروجی باید فقط و فقط یک آبجکت JSON معتبر و بدون هیچ متن اضافه یا markdown باشد.
@@ -117,9 +118,9 @@ function tryFastPath(
 ): NormalizedLeadResult | null {
   const clean = text.trim();
 
-  // Fast-path for Name: reject pure numbers/emojis/symbols (like "122") with 0 tokens,
+  // Fast-path for Name / Single-step Both: reject pure numbers/emojis/symbols (like "122") with 0 tokens,
   // or fast-path clean 2-4 word Persian names
-  if (expectedField === "name") {
+  if (expectedField === "name" || expectedField === "both") {
     const hasRealLetters = /[a-zA-Z\u0600-\u06FF]{2,}/.test(clean);
     if (!hasRealLetters) {
       const phoneExt = extractPhoneNumber({ messageText: clean });
@@ -160,12 +161,12 @@ function tryFastPath(
     }
   }
 
-  // Fast-path for Phone: clean phone number with no extra words
-  if (expectedField === "phone") {
+  // Fast-path for Phone / Single-step Both: clean phone number with no extra words
+  if (expectedField === "phone" || expectedField === "both") {
     const extraction = extractPhoneNumber({ messageText: clean });
     if (extraction.detected && extraction.phoneNumber) {
       // If message is practically just the phone number (length <= 20)
-      const digitsOnly = clean.replace(/[^0-9\u06F0-\u06F9]/g, "");
+      const digitsOnly = clean.replace(/[^0-9\u06F0-\u06F9\u0660-\u0669]/g, "");
       if (digitsOnly.length >= 10 && clean.length <= 20) {
         return {
           firstName: null,
@@ -187,7 +188,7 @@ function tryFastPath(
 
 /**
  * Normalizes lead data using Fast-Path or AI with complete fallback resilience.
- * CRITICAL INVARIANT: NEVER throws an error to the user or breaks the DM flow.
+ * CRITICAL INVARIANT: NEVER throws an error to the user, NEVER hallucinates phone digits, and NEVER breaks the DM flow.
  */
 export async function normalizeLeadData(
   options: NormalizeLeadOptions
@@ -221,6 +222,13 @@ export async function normalizeLeadData(
   if (fastPathResult) {
     return fastPathResult;
   }
+
+  // 1b. Pre-extract phone deterministically so AI can NEVER alter or hallucinate a single digit
+  const deterministicPhoneRes = extractPhoneNumber({ messageText: rawClean });
+  const deterministicPhone =
+    deterministicPhoneRes.detected && deterministicPhoneRes.phoneNumber
+      ? deterministicPhoneRes.phoneNumber
+      : null;
 
   // 2. Fetch AI Config for Workspace
   let aiConfig: {
@@ -291,17 +299,22 @@ export async function normalizeLeadData(
       fullName = null;
     }
 
-    let phone = parsed.phone ? String(parsed.phone).trim() : null;
-    if (phone) {
-      const validatedPhone = extractPhoneNumber({ messageText: phone });
-      if (validatedPhone.detected && validatedPhone.phoneNumber) {
+    // STRICT ANTI-HALLUCINATION LOCK:
+    // Deterministic phone ALWAYS takes priority; any AI phone candidate must match exact digits present in rawClean.
+    let phone: string | null = deterministicPhone;
+    if (!phone && parsed.phone) {
+      const aiPhoneCandidate = String(parsed.phone).trim();
+      const validatedPhone = extractPhoneNumber({ messageText: aiPhoneCandidate });
+      if (
+        validatedPhone.detected &&
+        validatedPhone.phoneNumber &&
+        isPhoneGroundedInInput(validatedPhone.phoneNumber, rawClean)
+      ) {
         phone = validatedPhone.phoneNumber;
-      }
-    } else {
-      // In case AI missed inline phone, run regex extractor as safety net
-      const fallbackPhone = extractPhoneNumber({ messageText: rawClean });
-      if (fallbackPhone.detected && fallbackPhone.phoneNumber) {
-        phone = fallbackPhone.phoneNumber;
+      } else {
+        console.warn(
+          `[LeadNormalizer] Blocked ungrounded/altered AI phone "${aiPhoneCandidate}" against input "${rawClean}"`
+        );
       }
     }
 
@@ -329,9 +342,53 @@ export async function normalizeLeadData(
   }
 }
 
+const PHONE_CLAUSE_REGEX =
+  /(?:(?:\+|00)?\s*98[\s\-_().]*0?|0)?9[\d\u06F0-\u06F9\u0660-\u0669]{2}[\s\-_().]*[\d\u06F0-\u06F9\u0660-\u0669]{3}[\s\-_().]*[\d\u06F0-\u06F9\u0660-\u0669]{4}|\+[\d\u06F0-\u06F9\u0660-\u0669]{8,15}/g;
+
+const FILLER_STANDALONE_WORDS = new Set([
+  "این",
+  "اینم",
+  "اون",
+  "شماره",
+  "شماره‌",
+  "شمارم",
+  "شماره‌ام",
+  "موبایل",
+  "موبایلم",
+  "تلفن",
+  "تلفنم",
+  "خط",
+  "همراه",
+  "من",
+  "بنده",
+  "هست",
+  "هستش",
+  "است",
+  "عه",
+  "ه",
+  "مال",
+  "شما",
+  "با",
+  "و",
+  "رو",
+  "هم",
+  "بفرمایید",
+  "خدمت",
+  "خدمتتون",
+  "عزیز",
+  "جان",
+  "ممنون",
+  "مرسی",
+  "تشکر",
+  "متشکرم",
+  "سپاس",
+  "فدات",
+]);
+
 /**
- * Safe heuristic fallback when AI is unavailable or encounters errors.
- * Ensures data is still extracted without throwing or interrupting the user.
+ * Safe deterministic backup engine when AI is unavailable or encounters errors.
+ * Handles single-step (name + phone together), phone-first, spaced/Persian numerals,
+ * conversational sentences, and notes without touching or altering phone digits.
  */
 function fallbackRegexExtraction(
   text: string,
@@ -340,39 +397,71 @@ function fallbackRegexExtraction(
   const phoneRes = extractPhoneNumber({ messageText: text });
   const phone = phoneRes.detected && phoneRes.phoneNumber ? phoneRes.phoneNumber : null;
 
-  // Clean conversational prefixes and greetings in a loop to handle compound greetings (e.g. "سلام روزتون بخیر من...")
-  let cleanedName = text.trim();
+  // Preserve meaningful trailing conditions/notes (e.g. "فقط لطفا بعد از ظهرها تماس بگیرید")
+  const noteClauseMatch = text.match(
+    /(?:فقط|لطفاً|لطفا|ساعت|بعد\s*از\s*ظهر|میخواستم|میخوام|برای|جهت|سوال|شرایط)[\s\S]*$/i
+  );
+  let notes: string | null = noteClauseMatch ? noteClauseMatch[0].replace(PHONE_CLAUSE_REGEX, "").trim() : null;
+
+  // 1. Strip phone numbers & bare digits FIRST so phone-first messages still reveal names cleanly
+  let working = text
+    .replace(PHONE_CLAUSE_REGEX, " ")
+    .replace(/[0-9\u06F0-\u06F9\u0660-\u0669]+/g, " ")
+    .replace(/[\u200c]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Strip phone introducer phrases ("شمارم", "شماره ام", "شماره من", "تلفنم", "موبایلم", "با شماره")
+  working = working
+    .replace(/\b(?:با\s+)?(?:شماره\s*تماس|شماره\s*موبایل|شماره\s*من|شماره‌?ام|شمارم|تلفنم|موبایلم|همراهم)\b[\s:،]*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // 2. Clean conversational greetings and name prefixes in a loop
   let prev = "";
-  while (prev !== cleanedName) {
-    prev = cleanedName;
-    cleanedName = cleanedName
-      .replace(/^(سلام|درود|صبح\s*بخیر|عصر\s*بخیر|شب\s*بخیر|وقت\s*(?:تون|تونم)?\s*بخیر|روز\s*(?:تون|تونم)?\s*بخیر|خسته\s*نباشید)[\s،,.]*/gi, "")
-      .replace(/^(من|اسمم|نام من|نامم|منم|بنده)[\s:]*/gi, "")
+  while (prev !== working) {
+    prev = working;
+    working = working
+      .replace(
+        /^(سلام|درود|صبح\s*بخیر|عصر\s*بخیر|شب\s*بخیر|وقت\s*(?:تون|تونم)?\s*بخیر|روز\s*(?:تون|تونم)?\s*بخیر|خسته\s*نباشید|عرض\s*ادب)[\s،,.:!]*/gi,
+        ""
+      )
+      .replace(/^(من|اسمم|اسم\s*من|نامم|نام\s*من|نام\s*و\s*نام\s*خانوادگی|منم|بنده|اینجانب)[\s:،]*/gi, "")
       .trim();
   }
 
-  // Strip trailing predicates and following intent/clauses (e.g. "هستم میخواستم ثبت نام کنم")
-  cleanedName = cleanedName
-    .replace(/\s*(?:هستم|می‌باشم|هستم\.)[\s\S]*$/gi, "")
-    .replace(/\s*(?:میخواستم|میخوام|برای|جهت|ثبت\s*نام|تماس)[\s\S]*$/gi, "")
+  // 3. Strip trailing predicates, courtesy phrases, and following intent/condition clauses
+  working = working
+    .replace(/\s*(?:هستم|می‌باشم|میباشم|هستم\.)[\s\S]*$/gi, "")
+    .replace(/\s*(?:میخواستم|میخوام|برای|جهت|ثبت\s*نام|تماس|فقط|لطفا|لطفاً|ساعت|بعد\s*از\s*ظهر)[\s\S]*$/gi, "")
+    .replace(/\s*(?:ممنون\s*از\s*شما|با\s*تشکر|ممنونم|ممنون|مرسی|متشکرم|تشکر|سپاسگزارم|سپاس|موفق\s*باشید|قربان\s*شما)[\s!.]*$/gi, "")
     .trim();
 
-  // Strip digits/numbers and phone number from name candidate
-  if (phone) {
-    cleanedName = cleanedName.replace(/(?:(?:\+|00)?98|0)?9[\d\u06F0-\u06F9]{9}/g, "").trim();
-  }
-  cleanedName = cleanedName.replace(/[0-9\u06F0-\u06F9\u0660-\u0669]+/g, "").trim();
-
   // Remove question clauses
-  const questionSplit = cleanedName.split(/[؟?]/)[0].trim();
+  const questionSplit = working.split(/[؟?]/)[0].trim();
   if (questionSplit.length >= 2) {
-    cleanedName = questionSplit;
+    working = questionSplit;
+  } else if (working.includes("؟") || working.includes("?")) {
+    working = "";
   }
 
-  const words = cleanedName.split(/\s+/).filter(Boolean);
-  let firstName: string | null = words[0] || null;
-  let lastName: string | null = words.slice(1).join(" ") || null;
-  let fullName: string | null = words.length > 0 ? words.join(" ") : null;
+  // Drop isolated non-name filler pronouns/nouns from edges or when entire phrase is filler ("این شماره من هستش")
+  const rawWords = working
+    .replace(/[،,.!():\-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const meaningfulWords = rawWords.filter((w) => !FILLER_STANDALONE_WORDS.has(w));
+
+  let firstName: string | null = meaningfulWords[0] || null;
+  let lastName: string | null = meaningfulWords.slice(1).join(" ") || null;
+  let fullName: string | null = meaningfulWords.length > 0 ? meaningfulWords.join(" ") : null;
+
+  // When specifically awaiting ONLY phone, ignore single-word accidental non-name noise unless at least 2 words look like a full name
+  if (expectedField === "phone" && meaningfulWords.length < 2) {
+    firstName = null;
+    lastName = null;
+    fullName = null;
+  }
 
   if (!isValidHumanName(fullName)) {
     firstName = null;
@@ -380,16 +469,29 @@ function fallbackRegexExtraction(
     fullName = null;
   }
 
+  if (!notes && text.length > 40) {
+    const leftover = text
+      .replace(PHONE_CLAUSE_REGEX, "")
+      .replace(fullName || "", "")
+      .trim();
+    if (leftover.length >= 6) {
+      notes = leftover;
+    }
+  }
+  if (notes && notes.length < 4) {
+    notes = null;
+  }
+
   return {
-    firstName: expectedField === "phone" ? null : firstName,
-    lastName: expectedField === "phone" ? null : lastName,
-    fullName: expectedField === "phone" ? null : fullName,
+    firstName,
+    lastName,
+    fullName,
     phone,
-    notes: text.length > 40 ? text : null,
+    notes,
     replyMessageToUser: null,
     normalizedByAi: false,
     fastPath: false,
-    confidence: 0.6,
+    confidence: 0.65,
   };
 }
 

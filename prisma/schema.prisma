@@ -217,19 +217,21 @@ model Automation {
   reportShareSlug      String? @unique
   reportShareEnabled   Boolean @default(true)
 
-  triggerType        AutomationTriggerType @default(COMMENT)
-  collectName        Boolean               @default(false)
-  leadPromptName     String?               @db.Text
-  collectEmail       Boolean               @default(false)
-  collectPhone       Boolean               @default(false)
-  collectPhoneSkipOtp Boolean              @default(false)
-  autoVerifyAndBook  Boolean               @default(false)
-  confirmBeforeSave  Boolean               @default(false)
-  confirmMessage     String?               @db.Text
-  leadPromptEmail    String?               @db.Text
-  leadPromptPhone    String?               @db.Text
-  leadSuccessMessage String?               @db.Text
-  leadMagnetFileUrl  String?               @db.Text
+  triggerType           AutomationTriggerType @default(COMMENT)
+  collectName           Boolean               @default(false)
+  leadPromptName        String?               @db.Text
+  collectEmail          Boolean               @default(false)
+  collectPhone          Boolean               @default(false)
+  collectPhoneSkipOtp   Boolean               @default(false)
+  autoVerifyAndBook     Boolean               @default(false)
+  confirmBeforeSave     Boolean               @default(false)
+  confirmMessage        String?               @db.Text
+  leadPromptEmail       String?               @db.Text
+  leadPromptPhone       String?               @db.Text
+  singleStepLeadCapture Boolean               @default(false)
+  leadPromptBoth        String?               @db.Text
+  leadSuccessMessage    String?               @db.Text
+  leadMagnetFileUrl     String?               @db.Text
 
   // Visual Flow Builder — stores the full multi-node FlowGraph JSON
   flowGraph Json?

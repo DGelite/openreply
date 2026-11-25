@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { getAiEngine } from "../factory";
+import { classifyBackupIntent } from "../backup-engine";
 import { normalizePersian } from "@/lib/utils/keyword-matcher";
 
 export type IntentCategory =
@@ -106,9 +107,10 @@ export async function classifyIntent(
     intentCache.delete(cacheKey);
   }
 
-  const aiEngine = await getAiEngine(workspaceId);
+  try {
+    const aiEngine = await getAiEngine(workspaceId);
 
-  const systemPrompt = `شما سیستم طبقه‌بندی هوشمند نیت کاربر (Intent Classifier) هستید.
+    const systemPrompt = `شما سیستم طبقه‌بندی هوشمند نیت کاربر (Intent Classifier) هستید.
 دسته‌های مجاز:
 - PRICING: استعلام قیمت، تعرفه
 - PURCHASE: قصد خرید، ثبت سفارش
@@ -130,51 +132,60 @@ export async function classifyIntent(
   "reasoning": "کاربر درباره قیمت محصول سوال کرده است."
 }`;
 
-  const completion = await aiEngine.generateCompletion({
-    systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-    jsonMode: true,
-  });
+    const completion = await aiEngine.generateCompletion({
+      systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+      jsonMode: true,
+    });
 
-  let result: IntentClassificationResult = {
-    primaryIntent: "UNKNOWN",
-    confidenceScore: 0.5,
-    secondaryIntents: [],
-  };
+    let result: IntentClassificationResult = classifyBackupIntent(cleanMessage);
 
-  try {
-    const parsed = JSON.parse(completion.text);
-    result = {
-      primaryIntent: parsed.primaryIntent || "UNKNOWN",
-      confidenceScore: parsed.confidenceScore || 0.8,
-      secondaryIntents: parsed.secondaryIntents || [],
-      reasoning: parsed.reasoning,
-    };
-  } catch {
-    // Fallback
+    try {
+      const parsed = JSON.parse(completion.text);
+      result = {
+        primaryIntent: parsed.primaryIntent || result.primaryIntent || "UNKNOWN",
+        confidenceScore: parsed.confidenceScore || 0.8,
+        secondaryIntents: parsed.secondaryIntents || [],
+        reasoning: parsed.reasoning,
+      };
+    } catch {
+      // Keep deterministic backup intent
+    }
+
+    // Cache result for repeated identical questions
+    if (intentCache.size >= MAX_INTENT_CACHE_SIZE) {
+      const oldest = intentCache.keys().next().value;
+      if (oldest) intentCache.delete(oldest);
+    }
+    intentCache.set(cacheKey, { result, expiresAt: now + INTENT_CACHE_TTL_MS });
+
+    // Fire-and-forget audit log (never block the response)
+    prisma.aiAuditLog.create({
+      data: {
+        workspaceId,
+        feature: "INTENT",
+        provider: completion.provider,
+        model: completion.model,
+        promptTokens: completion.promptTokens,
+        completionTokens: completion.completionTokens,
+        latencyMs: completion.latencyMs,
+        confidenceScore: result.confidenceScore,
+        intentDetected: result.primaryIntent,
+      },
+    }).catch(() => {});
+
+    return result;
+  } catch (err) {
+    console.warn(
+      "[Intent Recognition] AI unavailable, switching to deterministic backup engine:",
+      err instanceof Error ? err.message : err
+    );
+    const backup = classifyBackupIntent(cleanMessage);
+    if (intentCache.size >= MAX_INTENT_CACHE_SIZE) {
+      const oldest = intentCache.keys().next().value;
+      if (oldest) intentCache.delete(oldest);
+    }
+    intentCache.set(cacheKey, { result: backup, expiresAt: now + INTENT_CACHE_TTL_MS });
+    return backup;
   }
-
-  // Cache result for repeated identical questions
-  if (intentCache.size >= MAX_INTENT_CACHE_SIZE) {
-    const oldest = intentCache.keys().next().value;
-    if (oldest) intentCache.delete(oldest);
-  }
-  intentCache.set(cacheKey, { result, expiresAt: now + INTENT_CACHE_TTL_MS });
-
-  // Fire-and-forget audit log (never block the response)
-  prisma.aiAuditLog.create({
-    data: {
-      workspaceId,
-      feature: "INTENT",
-      provider: completion.provider,
-      model: completion.model,
-      promptTokens: completion.promptTokens,
-      completionTokens: completion.completionTokens,
-      latencyMs: completion.latencyMs,
-      confidenceScore: result.confidenceScore,
-      intentDetected: result.primaryIntent,
-    },
-  }).catch(() => {});
-
-  return result;
 }

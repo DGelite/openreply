@@ -735,7 +735,7 @@ export async function processIncomingDirectMessage(
     const norm = await normalizeLeadData({
       workspaceId: account.workspaceId,
       userMessage: messageText,
-      expectedField: "phone",
+      expectedField: conversationState.step === "AWAITING_NAME" ? "both" : "phone",
       mode: "SILENT_NORMALIZE_ONLY",
     });
 
@@ -963,10 +963,19 @@ export async function processIncomingDirectMessage(
     }
 
     // If conversation was awaiting name/phone in a linear campaign
-    if (conversationState.step === "AWAITING_NAME" && activeAutomation?.collectName && !leadFullName) {
+    const convMeta =
+      conversationState.metadata && typeof conversationState.metadata === "object"
+        ? (conversationState.metadata as Record<string, unknown>)
+        : {};
+    const hasNameInCurrentForm = Boolean(validNormName || convMeta.nameCapturedInCurrentForm === true);
+
+    if (conversationState.step === "AWAITING_NAME" && activeAutomation?.collectName && !hasNameInCurrentForm) {
       await prisma.conversationState.update({
         where: { id: conversationState.id },
-        data: { step: "AWAITING_NAME" },
+        data: {
+          step: "AWAITING_NAME",
+          metadata: { ...convMeta, phoneCapturedInCurrentForm: true },
+        },
       });
       await sendDirectMessage(
         accessToken,
@@ -978,7 +987,7 @@ export async function processIncomingDirectMessage(
       return;
     }
 
-    if (conversationState.step === "AWAITING_PHONE" || (conversationState.step === "AWAITING_NAME" && leadFullName)) {
+    if (conversationState.step === "AWAITING_PHONE" || (conversationState.step === "AWAITING_NAME" && hasNameInCurrentForm)) {
       const needsOtp = Boolean(
         activeAutomation?.collectPhone &&
         !activeAutomation?.collectPhoneSkipOtp &&
@@ -1756,11 +1765,15 @@ export async function processIncomingDirectMessage(
           return;
         }
 
+        const isSingleStep = Boolean(
+          automation.collectName && automation.collectPhone && automation.singleStepLeadCapture
+        );
         const initialStep = automation.collectName
           ? "AWAITING_NAME"
           : automation.collectEmail
           ? "AWAITING_EMAIL"
           : "AWAITING_PHONE";
+        const initialMetadata = isSingleStep ? { singleStepLead: true } : {};
 
         await prisma.conversationState.upsert({
           where: {
@@ -1773,18 +1786,21 @@ export async function processIncomingDirectMessage(
             step: initialStep,
             automationId: automation.id,
             activeNodeId: null,
-            metadata: {},
+            metadata: initialMetadata,
           },
           update: {
             step: initialStep,
             automationId: automation.id,
             activeNodeId: null,
-            metadata: {},
+            metadata: initialMetadata,
           },
         });
 
         const promptText = selectDmMessageVariation(
-          initialStep === "AWAITING_NAME"
+          isSingleStep
+            ? automation.leadPromptBoth ||
+                "سلام! برای تکمیل سریع، لطفاً اسم و فامیل به همراه شماره موبایلتون رو توی یک پیام برام بفرستید 🙏"
+            : initialStep === "AWAITING_NAME"
             ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
             : initialStep === "AWAITING_EMAIL"
             ? automation.leadPromptEmail || "لطفاً ایمیلتون رو بفرستید:"

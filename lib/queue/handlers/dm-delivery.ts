@@ -17,6 +17,29 @@ import { generateSmartResponse } from "@/lib/ai/features/smart-responses";
 import { enqueueJob } from "@/lib/queue/mysql-queue";
 import { hasOpen24HourWindow, redactSensitiveFinancialData } from "@/lib/meta/compliance";
 
+function resolveInitialLeadPrompt(automation: AutomationWithAccountAndLinks): {
+  initialStep: "AWAITING_NAME" | "AWAITING_PHONE";
+  promptText: string;
+  metadata: Record<string, boolean>;
+} {
+  const isSingleStep = Boolean(
+    automation.collectName && automation.collectPhone && automation.singleStepLeadCapture
+  );
+  const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
+  const rawPrompt = isSingleStep
+    ? automation.leadPromptBoth ||
+      "سلام! برای تکمیل سریع، لطفاً اسم و فامیل به همراه شماره موبایلتون رو توی یک پیام برام بفرستید 🙏"
+    : initialStep === "AWAITING_NAME"
+    ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
+    : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱";
+
+  return {
+    initialStep,
+    promptText: selectDmMessageVariation(rawPrompt),
+    metadata: isSingleStep ? { singleStepLead: true } : {},
+  };
+}
+
 export async function deliverPrivateReply(params: {
   automation: AutomationWithAccountAndLinks;
   accessToken: string;
@@ -400,12 +423,7 @@ export async function deliverPrivateReply(params: {
   } else if (hasLeadForm) {
     // Always use Instagram's single allowed privateReply slot to send the first Lead Form prompt.
     // Any configured `dmMessage` ("And then, they will get") is delivered AFTER the form completes.
-    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
-    const promptText = selectDmMessageVariation(
-      initialStep === "AWAITING_NAME"
-        ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
-        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱"
-    );
+    const { promptText } = resolveInitialLeadPrompt(automation);
 
     sendResult = await providerManager.privateReply(accountId, commentId, promptText);
   } else if (automation.trackedLinks[0]) {
@@ -471,7 +489,7 @@ export async function deliverPrivateReply(params: {
   });
 
   if (!useOpeningDm && hasLeadForm) {
-    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
+    const { initialStep, metadata } = resolveInitialLeadPrompt(automation);
     await prisma.conversationState.upsert({
       where: {
         instagramAccountId_userId: {
@@ -486,13 +504,13 @@ export async function deliverPrivateReply(params: {
         step: initialStep,
         automationId: automation.id,
         activeNodeId: null,
-        metadata: {},
+        metadata,
       },
       update: {
         step: initialStep,
         automationId: automation.id,
         activeNodeId: null,
-        metadata: {},
+        metadata,
       },
     });
   }
@@ -514,7 +532,7 @@ export async function deliverPostbackReveal(params: {
   const hasLeadForm = Boolean(automation.collectName || automation.collectPhone);
 
   if (hasLeadForm) {
-    const initialStep = automation.collectName ? "AWAITING_NAME" : "AWAITING_PHONE";
+    const { initialStep, promptText, metadata } = resolveInitialLeadPrompt(automation);
     await prisma.conversationState.upsert({
       where: {
         instagramAccountId_userId: {
@@ -529,21 +547,15 @@ export async function deliverPostbackReveal(params: {
         step: initialStep,
         automationId: automation.id,
         activeNodeId: null,
-        metadata: {},
+        metadata,
       },
       update: {
         step: initialStep,
         automationId: automation.id,
         activeNodeId: null,
-        metadata: {},
+        metadata,
       },
     });
-
-    const promptText = selectDmMessageVariation(
-      initialStep === "AWAITING_NAME"
-        ? automation.leadPromptName || "سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏"
-        : automation.leadPromptPhone || "سلام! لطفاً شماره موبایلتون رو بفرستید 📱"
-    );
 
     await providerManager.sendTextMessage(accountId, userId, promptText);
   } else if (primaryLink) {

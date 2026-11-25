@@ -14,6 +14,10 @@ interface LeadFormSectionProps {
   setCollectPhone: (v: boolean) => void;
   leadPromptPhone: string;
   setLeadPromptPhone: (v: string) => void;
+  singleStepLeadCapture: boolean;
+  setSingleStepLeadCapture: (v: boolean) => void;
+  leadPromptBoth: string;
+  setLeadPromptBoth: (v: string) => void;
   confirmBeforeSave: boolean;
   setConfirmBeforeSave: (v: boolean) => void;
   confirmMessage: string;
@@ -37,6 +41,10 @@ export function LeadFormSection({
   setCollectPhone,
   leadPromptPhone,
   setLeadPromptPhone,
+  singleStepLeadCapture,
+  setSingleStepLeadCapture,
+  leadPromptBoth,
+  setLeadPromptBoth,
   confirmBeforeSave,
   setConfirmBeforeSave,
   confirmMessage,
@@ -166,6 +174,48 @@ export function LeadFormSection({
                 </div>
               )}
             </div>
+
+            {/* Option 3: Single-Step Name + Phone in 1 Message (shown when both Name & Phone are enabled) */}
+            {collectName && collectPhone && (
+              <div className="space-y-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3.5">
+                <div className="flex items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    id="singleStepLeadCaptureToggle"
+                    checked={singleStepLeadCapture}
+                    onChange={(e) => setSingleStepLeadCapture(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-sky-500 text-sky-600 focus:ring-sky-500/40"
+                  />
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="singleStepLeadCaptureToggle"
+                      className="cursor-pointer font-medium text-sm text-foreground flex items-center gap-1.5"
+                    >
+                      <span>⚡ روش تک‌مرحله‌ای برای سرعت بالا (اسم و شماره با هم در ۱ پیام)</span>
+                    </label>
+                    <p className="text-xs text-muted leading-relaxed">
+                      به‌جای دو سوال جدا، هر دو را در یک پیام می‌پرسد. اگر مخاطب فقط اسم یا فقط شماره بفرستد، سیستم هوشمندانه فقط بخش جاافتاده را از متن بالا می‌پرسد.
+                    </p>
+                  </div>
+                </div>
+
+                {singleStepLeadCapture && (
+                  <div className="pt-1">
+                    <label className="block text-xs text-muted mb-1">
+                      متن پیام درخواست همزمان اسم و شماره (قابل ویرایش):
+                    </label>
+                    <input
+                      type="text"
+                      value={leadPromptBoth}
+                      onChange={(e) => setLeadPromptBoth(e.target.value)}
+                      placeholder="سلام! برای تکمیل سریع، لطفاً اسم و فامیل به همراه شماره موبایلتون رو توی یک پیام برام بفرستید 🙏"
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                      maxLength={300}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Option: Instant Verified Booking */}
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3.5">

@@ -79,6 +79,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [leadPromptName, setLeadPromptName] = useState("سلام! لطفاً اسم و فامیلتون رو برام بنویسید 🙏");
   const [collectPhone, setCollectPhone] = useState(false);
   const [leadPromptPhone, setLeadPromptPhone] = useState("ممنون! لطفاً شماره موبایلتون رو بفرستید 📱");
+  const [singleStepLeadCapture, setSingleStepLeadCapture] = useState(false);
+  const [leadPromptBoth, setLeadPromptBoth] = useState(
+    "سلام! برای تکمیل سریع، لطفاً اسم و فامیل به همراه شماره موبایلتون رو توی یک پیام برام بفرستید 🙏"
+  );
   const [confirmBeforeSave, setConfirmBeforeSave] = useState(false);
   const [confirmMessage, setConfirmMessage] = useState("شماره‌تون {phone} ثبت شد، درسته؟");
   const [collectPhoneSkipOtp, setCollectPhoneSkipOtp] = useState(false);
@@ -188,6 +192,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         if (c.leadPromptName) setLeadPromptName(c.leadPromptName);
         if (c.collectPhone) setCollectPhone(true);
         if (c.leadPromptPhone) setLeadPromptPhone(c.leadPromptPhone);
+        if (c.singleStepLeadCapture) setSingleStepLeadCapture(true);
+        if (c.leadPromptBoth) setLeadPromptBoth(c.leadPromptBoth);
         if (c.confirmBeforeSave) setConfirmBeforeSave(true);
         if (c.confirmMessage) setConfirmMessage(c.confirmMessage);
         if (c.collectPhoneSkipOtp) setCollectPhoneSkipOtp(true);
@@ -328,6 +334,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       leadPromptName: leadFormEnabled && collectName ? leadPromptName.trim() : null,
       collectPhone: leadFormEnabled ? collectPhone : false,
       leadPromptPhone: leadFormEnabled && collectPhone ? leadPromptPhone.trim() : null,
+      singleStepLeadCapture: Boolean(leadFormEnabled && collectName && collectPhone && singleStepLeadCapture),
+      leadPromptBoth: leadFormEnabled && collectName && collectPhone ? leadPromptBoth.trim() : null,
       confirmBeforeSave: leadFormEnabled && collectPhone ? confirmBeforeSave : false,
       confirmMessage: leadFormEnabled && collectPhone && confirmBeforeSave ? confirmMessage.trim() : null,
       collectPhoneSkipOtp: leadFormEnabled && collectPhone ? collectPhoneSkipOtp : false,
@@ -628,6 +636,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             setCollectPhone={setCollectPhone}
             leadPromptPhone={leadPromptPhone}
             setLeadPromptPhone={setLeadPromptPhone}
+            singleStepLeadCapture={singleStepLeadCapture}
+            setSingleStepLeadCapture={setSingleStepLeadCapture}
+            leadPromptBoth={leadPromptBoth}
+            setLeadPromptBoth={setLeadPromptBoth}
             confirmBeforeSave={confirmBeforeSave}
             setConfirmBeforeSave={setConfirmBeforeSave}
             confirmMessage={confirmMessage}

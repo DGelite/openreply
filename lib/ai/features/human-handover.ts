@@ -17,7 +17,23 @@ export async function detectHumanHandoverNeed(
   const lowercaseMsg = userMessage.toLowerCase().trim();
 
   // Fast pattern matching keywords for instant zero-latency handover
-  const handoverKeywords = ["پشتیبان", "اپراتور", "انسان", "مدیر", "وصل کن", "ادمین", "operator", "human", "agent", "support"];
+  const handoverKeywords = [
+    "پشتیبان",
+    "اپراتور",
+    "انسان",
+    "مدیر",
+    "وصل کن",
+    "ادمین",
+    "کارشناس",
+    "شکایت",
+    "کلاهبرداری",
+    "ناراضی",
+    "پاسخگو باشید",
+    "operator",
+    "human",
+    "agent",
+    "support",
+  ];
   const directMatch = handoverKeywords.some((kw) => lowercaseMsg.includes(kw));
 
   if (directMatch) {

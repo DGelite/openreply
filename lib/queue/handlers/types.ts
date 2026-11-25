@@ -22,6 +22,9 @@ export interface AutomationWithAccountAndLinks {
   collectPhone?: boolean;
   leadPromptName?: string | null;
   leadPromptPhone?: string | null;
+  singleStepLeadCapture?: boolean;
+  leadPromptBoth?: string | null;
+  leadSuccessMessage?: string | null;
   autoVerifyAndBook?: boolean;
   createdAt: Date;
   updatedAt: Date;
